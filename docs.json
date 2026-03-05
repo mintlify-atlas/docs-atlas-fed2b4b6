@@ -82,8 +82,10 @@
             "group": "Core Classes",
             "pages": [
               "api/base-model",
+              "api/base-model-mongo",
               "api/base-service",
-              "api/rest-controller"
+              "api/rest-controller",
+              "api/base-form-request"
             ]
           },
           {

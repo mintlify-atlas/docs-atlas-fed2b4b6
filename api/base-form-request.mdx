@@ -1,0 +1,392 @@
+---
+title: BaseFormRequest
+description: Base form request class for validation with REST Generic Class features
+icon: shield-check
+---
+
+## Overview
+
+`BaseFormRequest` extends Laravel's `FormRequest` and provides enhanced validation capabilities integrated with Rest Generic Class features, including role-based field validation and database existence checks.
+
+```php
+namespace Ronu\RestGenericClass\Core\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class BaseFormRequest extends FormRequest
+```
+
+## Basic Usage
+
+Create a form request by extending `BaseFormRequest`:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class CreateProductRequest extends BaseFormRequest
+{
+    /**
+     * Determine if the user is authorized to make this request.
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+    
+    /**
+     * Get the validation rules that apply to the request.
+     */
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'stock' => 'required|integer|min:0',
+            'category_id' => 'required|integer|exists:categories,id',
+        ];
+    }
+}
+```
+
+## Usage in Controllers
+
+Use form requests in your controller methods:
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Requests\CreateProductRequest;
+use App\Http\Requests\UpdateProductRequest;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    public function store(CreateProductRequest $request): array
+    {
+        // Request is automatically validated
+        $validated = $request->validated();
+        
+        return $this->service->create($request);
+    }
+    
+    public function update(UpdateProductRequest $request, int $id): array
+    {
+        return $this->service->update($request, $id);
+    }
+}
+```
+
+## Integration with TransformData Middleware
+
+BaseFormRequest works seamlessly with the `TransformData` middleware to inject route parameters:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class UpdateProductRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        // Access route parameter injected by TransformData middleware
+        $productId = $this->input('id');
+        
+        return [
+            'name' => 'required|string|max:255',
+            'sku' => "required|string|unique:products,sku,{$productId}",
+            'price' => 'required|numeric|min:0',
+        ];
+    }
+}
+```
+
+## Custom Validation Rules
+
+Use the package's custom validation rules in your form requests:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivot;
+
+class AssignTagsRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'product_id' => ['required', 'integer', new IdsExistInTable('products')],
+            'tag_ids' => ['required', 'array'],
+            'tag_ids.*' => ['integer', new IdsExistInTable('tags')],
+        ];
+    }
+}
+```
+
+## Bulk Validation
+
+For bulk operations, validate arrays of data:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+use Ronu\RestGenericClass\Core\Rules\UniqueCompositeInArray;
+
+class BulkCreateProductsRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'products' => ['required', 'array', 'min:1'],
+            'products.*.name' => 'required|string|max:255',
+            'products.*.sku' => [
+                'required',
+                'string',
+                'unique:products,sku',
+                new UniqueCompositeInArray(['sku'], 'products'),
+            ],
+            'products.*.price' => 'required|numeric|min:0',
+        ];
+    }
+}
+```
+
+## Custom Error Messages
+
+Override the `messages()` method to provide custom error messages:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class CreateProductRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+        ];
+    }
+    
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Product name is required',
+            'name.max' => 'Product name cannot exceed 255 characters',
+            'price.required' => 'Price is required',
+            'price.min' => 'Price must be at least 0',
+        ];
+    }
+}
+```
+
+## Custom Attribute Names
+
+Override the `attributes()` method for cleaner error messages:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class CreateProductRequest extends BaseFormRequest
+{
+    public function attributes(): array
+    {
+        return [
+            'category_id' => 'category',
+            'stock' => 'inventory count',
+        ];
+    }
+}
+```
+
+## Conditional Rules
+
+Apply rules conditionally based on request data:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class CreateProductRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        $rules = [
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'type' => 'required|in:physical,digital',
+        ];
+        
+        // Add shipping fields only for physical products
+        if ($this->input('type') === 'physical') {
+            $rules['weight'] = 'required|numeric|min:0';
+            $rules['dimensions'] = 'required|array';
+        }
+        
+        return $rules;
+    }
+}
+```
+
+## Validation with Scenarios
+
+Use the model's scenario system for different validation contexts:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class ProductRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        $scenario = $this->route('scenario', 'create');
+        
+        return match ($scenario) {
+            'create' => $this->createRules(),
+            'update' => $this->updateRules(),
+            'partial' => $this->partialUpdateRules(),
+            default => [],
+        };
+    }
+    
+    protected function createRules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric',
+            'category_id' => 'required|exists:categories,id',
+        ];
+    }
+    
+    protected function updateRules(): array
+    {
+        return [
+            'name' => 'sometimes|string|max:255',
+            'price' => 'sometimes|numeric',
+            'category_id' => 'sometimes|exists:categories,id',
+        ];
+    }
+    
+    protected function partialUpdateRules(): array
+    {
+        return [
+            'name' => 'string|max:255',
+            'price' => 'numeric',
+        ];
+    }
+}
+```
+
+## Integration with Role-Based Validation
+
+BaseFormRequest integrates with the `FilterRequestByRole` middleware to automatically validate field access based on user roles.
+
+## Complete Example
+
+Here's a comprehensive example combining multiple features:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivot;
+
+class CreateOrderRequest extends BaseFormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('create', Order::class);
+    }
+    
+    public function rules(): array
+    {
+        return [
+            'customer_id' => [
+                'required',
+                'integer',
+                new IdsExistInTable('customers', 'id', 'default'),
+            ],
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => [
+                'required',
+                'integer',
+                new IdsExistInTable('products'),
+            ],
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.price' => 'required|numeric|min:0',
+            'shipping_address' => 'required|array',
+            'shipping_address.street' => 'required|string',
+            'shipping_address.city' => 'required|string',
+            'shipping_address.postal_code' => 'required|string',
+        ];
+    }
+    
+    public function messages(): array
+    {
+        return [
+            'customer_id.required' => 'Customer is required',
+            'items.required' => 'At least one item is required',
+            'items.*.product_id.required' => 'Product ID is required for each item',
+        ];
+    }
+    
+    public function attributes(): array
+    {
+        return [
+            'customer_id' => 'customer',
+            'items.*.product_id' => 'product',
+            'items.*.quantity' => 'quantity',
+        ];
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Validation Rules" icon="list-check" href="/api/validation/overview">
+    Explore custom validation rules
+  </Card>
+  <Card title="RestController" icon="code" href="/api/rest-controller">
+    Using form requests in controllers
+  </Card>
+  <Card title="TransformData Middleware" icon="arrows-rotate" href="/api/middleware/transform-data">
+    Automatic request transformation
+  </Card>
+  <Card title="FilterRequestByRole" icon="user-shield" href="/api/middleware/filter-request-by-role">
+    Role-based field filtering
+  </Card>
+</CardGroup>

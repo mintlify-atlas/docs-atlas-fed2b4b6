@@ -1,0 +1,225 @@
+---
+title: BaseModelMongo
+description: Base model class for MongoDB collections with REST API support
+icon: database
+---
+
+## Overview
+
+`BaseModelMongo` is the MongoDB equivalent of `BaseModel`, providing the same REST API capabilities for MongoDB collections using the Laravel MongoDB package.
+
+```php
+namespace Ronu\RestGenericClass\Core\Models;
+
+use MongoDB\Laravel\Eloquent\Model;
+
+class BaseModelMongo extends Model
+```
+
+<Note>
+  This class requires the `mongodb/laravel-mongodb` package to be installed separately. It is not included by default.
+</Note>
+
+## Installation
+
+To use MongoDB models, install the Laravel MongoDB package:
+
+```bash
+composer require mongodb/laravel-mongodb
+```
+
+Configure your MongoDB connection in `config/database.php`:
+
+```php
+'mongodb' => [
+    'driver' => 'mongodb',
+    'host' => env('DB_MONGO_HOST', '127.0.0.1'),
+    'port' => env('DB_MONGO_PORT', 27017),
+    'database' => env('DB_MONGO_DATABASE', 'homestead'),
+    'username' => env('DB_MONGO_USERNAME', 'homestead'),
+    'password' => env('DB_MONGO_PASSWORD', 'secret'),
+    'options' => [
+        'database' => env('DB_MONGO_AUTH_DATABASE', 'admin'),
+    ],
+],
+```
+
+## Basic Usage
+
+Create a MongoDB model by extending `BaseModelMongo`:
+
+```php
+<?php
+
+namespace App\Models;
+
+use Ronu\RestGenericClass\Core\Models\BaseModelMongo;
+
+class Product extends BaseModelMongo
+{
+    protected $connection = 'mongodb';
+    protected $collection = 'products';
+    
+    protected $fillable = ['name', 'price', 'stock', 'category_id'];
+    
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews'];
+    
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+    
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+}
+```
+
+## Constants
+
+BaseModelMongo supports the same constants as BaseModel:
+
+<ParamField path="MODEL" type="string" required>
+  The model identifier used in API responses and logging
+</ParamField>
+
+<ParamField path="columns" type="array" default="[]">
+  Default columns to select when querying the model
+</ParamField>
+
+<ParamField path="RELATIONS" type="array" default="[]">
+  Whitelisted relations that can be eager loaded via the API
+</ParamField>
+
+<ParamField path="HIERARCHY_FIELD_ID" type="string|null" default="null">
+  The field name for self-referencing hierarchy (e.g., 'parent_id')
+</ParamField>
+
+## MongoDB-Specific Relations
+
+BaseModelMongo provides helper methods for MongoDB relations:
+
+### belongsToMongo
+
+Define a MongoDB BelongsTo relationship:
+
+```php
+public function category()
+{
+    return $this->belongsToMongo(Category::class, 'category_id');
+}
+```
+
+### hasManyMongo
+
+Define a MongoDB HasMany relationship:
+
+```php
+public function reviews()
+{
+    return $this->hasManyMongo(Review::class, 'product_id');
+}
+```
+
+### hasOneMongo
+
+Define a MongoDB HasOne relationship:
+
+```php
+public function detail()
+{
+    return $this->hasOneMongo(ProductDetail::class, 'product_id');
+}
+```
+
+## Features
+
+All BaseModel features work with BaseModelMongo:
+
+- Dynamic filtering with operators
+- Relation loading with field selection
+- Hierarchical data support
+- Role-based field restrictions
+- Validation and form requests
+- Export to Excel/PDF
+
+## Differences from BaseModel
+
+1. **Connection**: Uses MongoDB driver instead of SQL
+2. **Collection**: Uses `$collection` property instead of `$table`
+3. **Relations**: MongoDB-specific relation methods
+4. **Schema**: Schemaless - no migrations required
+5. **Query Builder**: MongoDB query builder syntax
+
+## Example Service
+
+Use BaseModelMongo with BaseService just like regular models:
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+}
+```
+
+## Example Controller
+
+Controllers work identically with MongoDB models:
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Models\Product;
+use App\Services\ProductService;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    protected $modelClass = Product::class;
+    
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+}
+```
+
+## Limitations
+
+<Warning>
+  Some SQL-specific features may not work with MongoDB:
+  - Complex joins across different databases
+  - SQL-specific operators (some may need MongoDB equivalents)
+  - Database transactions work differently in MongoDB
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="BaseModel" icon="cube" href="/api/base-model">
+    Learn about the SQL version
+  </Card>
+  <Card title="BaseService" icon="gear" href="/api/base-service">
+    Using services with MongoDB models
+  </Card>
+  <Card title="Filtering" icon="filter" href="/core/filtering">
+    Dynamic filtering with MongoDB
+  </Card>
+  <Card title="Relations" icon="diagram-project" href="/core/relations">
+    Working with MongoDB relations
+  </Card>
+</CardGroup>
