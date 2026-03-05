@@ -1,0 +1,526 @@
+---
+title: "Advanced Filtering"
+description: "Master complex filtering scenarios with nested relations, multiple conditions, and safety limits"
+---
+
+Rest Generic Class provides a powerful filtering engine that supports complex queries, nested relation filters, and safety guardrails to protect your database from malicious or poorly-formed requests.
+
+## Filter Syntax Fundamentals
+
+The `oper` parameter accepts a structured JSON object with logical operators (`and`/`or`) and condition strings in the format:
+
+```
+field|operator|value
+```
+
+### Basic Example
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50"
+    ]
+  }
+}
+```
+
+This translates to SQL:
+
+```sql
+WHERE status = 'active' AND price >= 50
+```
+
+## Supported Operators
+
+<AccordionGroup>
+  <Accordion title="Comparison Operators">
+    - `=` — Equal
+    - `!=` — Not equal
+    - `<` — Less than
+    - `>` — Greater than
+    - `<=` — Less than or equal
+    - `>=` — Greater than or equal
+
+    ```json
+    {
+      "oper": {
+        "and": [
+          "price|>|100",
+          "stock|<=|50"
+        ]
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Pattern Matching">
+    - `like` — Case-sensitive pattern (SQL LIKE)
+    - `not like` — Negated case-sensitive pattern
+    - `ilike` — Case-insensitive pattern (PostgreSQL ILIKE)
+    - `not ilike` — Negated case-insensitive pattern
+
+    ```json
+    {
+      "oper": {
+        "and": [
+          "name|like|%keyboard%",
+          "description|ilike|%wireless%"
+        ]
+      }
+    }
+    ```
+
+    <Note>
+      The `%` wildcard is automatically added if not present. Use explicit wildcards for prefix/suffix searches: `name|like|Pro%` or `name|like|%Elite`
+    </Note>
+  </Accordion>
+
+  <Accordion title="Set Operations">
+    - `in` — Value in set
+    - `not in` — Value not in set
+
+    ```json
+    {
+      "oper": {
+        "and": [
+          "category_id|in|3,4,5",
+          "status|not in|deleted,archived"
+        ]
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Range Operations">
+    - `between` — Value in range (inclusive)
+    - `not between` — Value outside range
+
+    ```json
+    {
+      "oper": {
+        "and": [
+          "price|between|50,200",
+          "created_at|between|2026-01-01,2026-12-31"
+        ]
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Null Checks">
+    - `null` — Is NULL
+    - `not null` — Is NOT NULL
+
+    ```json
+    {
+      "oper": {
+        "and": [
+          "deleted_at|null",
+          "verified_at|not null"
+        ]
+      }
+    }
+    ```
+
+    <Note>
+      No value is needed after `null` or `not null` operators. The format is `field|null`.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Date Operations">
+    - `date` — Matches date (ignores time)
+    - `not date` — Does not match date
+
+    ```json
+    {
+      "oper": {
+        "and": [
+          "created_at|date|2026-03-05"
+        ]
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Combining AND and OR Logic
+
+### Multiple AND Conditions
+
+All conditions must be true:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50",
+      "stock|>|0"
+    ]
+  }
+}
+```
+
+### Multiple OR Conditions
+
+At least one condition must be true:
+
+```json
+{
+  "oper": {
+    "or": [
+      "category_id|=|3",
+      "category_id|=|4",
+      "category_id|=|5"
+    ]
+  }
+}
+```
+
+### Mixed AND/OR Logic
+
+Combine both operators for complex queries:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50"
+    ],
+    "or": [
+      "category_id|=|3",
+      "category_id|=|4"
+    ]
+  }
+}
+```
+
+This translates to:
+
+```sql
+WHERE status = 'active' 
+  AND price >= 50 
+  AND (category_id = 3 OR category_id = 4)
+```
+
+## Filtering by Relations
+
+Filter the **root dataset** based on related records using `whereHas`.
+
+### Basic Relation Filter
+
+Find products where the category name contains "electronics":
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "category": {
+      "and": ["name|like|%electronics%"]
+    }
+  }
+}
+```
+
+<Note>
+  The relation key (`category`) must be listed in `Product::RELATIONS`. The package validates all relation names for security.
+</Note>
+
+### Nested Relation Filters
+
+Filter by deeply nested relationships:
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "reviews": {
+      "and": ["rating|>=|4"],
+      "user": {
+        "and": ["verified|=|true"]
+      }
+    }
+  }
+}
+```
+
+This finds products with reviews rated 4+ stars by verified users.
+
+### Filtering vs. Eager Loading
+
+**Relation filters in `oper`** affect which root records are returned:  
+- ✅ Returns products **that have** a matching category
+- ❌ Does NOT load the category data
+
+**Eager loading with `relations`** loads related data:  
+- ✅ Loads the category object for each product
+- ❌ Does NOT filter the root dataset
+
+**Combined example:**
+
+```http
+GET /api/v1/products?relations=["category:id,name"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "category": {
+      "and": ["name|like|%electronics%"]
+    }
+  }
+}
+```
+
+This:
+1. Filters products to those in electronics categories
+2. Eager-loads the category data for each result
+
+## Filtering Eager-Loaded Relations with `_nested`
+
+By default, relation filters in `oper` only affect the root query via `whereHas`. Set `_nested=true` to also filter the eager-loaded relations.
+
+```json
+{
+  "_nested": true,
+  "relations": ["reviews"],
+  "oper": {
+    "reviews": {
+      "and": ["rating|>=|4"]
+    }
+  }
+}
+```
+
+With `_nested=true`:
+- ✅ Root query: returns products **that have** reviews with rating >= 4
+- ✅ Eager-loaded reviews: **only** loads reviews with rating >= 4
+
+Without `_nested` (default):
+- ✅ Root query: returns products **that have** reviews with rating >= 4
+- ✅ Eager-loaded reviews: loads **all** reviews for each product
+
+<Warning>
+  Use `_nested=true` carefully. It changes the structure of your response data by filtering nested collections.
+</Warning>
+
+## Column Validation
+
+Rest Generic Class validates all column names in filters to prevent SQL injection and typos.
+
+### How It Works
+
+1. The package queries `information_schema.columns` to get valid column names
+2. Results are cached for 1 hour (configurable)
+3. Invalid column names trigger a 400 error
+
+### Configuration
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'validate_columns' => env('REST_VALIDATE_COLUMNS', true),
+    'strict_column_validation' => env('REST_STRICT_COLUMNS', true),
+    'column_cache_ttl' => 3600, // Cache column lists for 1 hour
+],
+```
+
+### Example Error
+
+Request:
+
+```json
+{
+  "oper": {
+    "and": ["non_existent_column|=|value"]
+  }
+}
+```
+
+Response (400 Bad Request):
+
+```json
+{
+  "message": "Column 'non_existent_column' does not exist in table 'products'. Available columns: id, name, price, stock, category_id, created_at, updated_at"
+}
+```
+
+<Note>
+  Disable column validation in development with `REST_VALIDATE_COLUMNS=false`, but keep it enabled in production for security.
+</Note>
+
+## Safety Limits
+
+The package enforces limits to prevent query explosions that could overwhelm your database.
+
+### Max Conditions
+
+Default: **100 conditions** per request
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'max_conditions' => 100,
+],
+```
+
+Requests with more than 100 conditions will trigger a 400 error:
+
+```json
+{
+  "message": "Maximum conditions (100) exceeded. Current: 150"
+}
+```
+
+### Max Depth
+
+Default: **5 levels** of nested relations
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'max_depth' => 5,
+],
+```
+
+Deeply nested filters will trigger a 400 error:
+
+```json
+{
+  "message": "Maximum filter depth (5) exceeded. Current: 7"
+}
+```
+
+<Warning>
+  Increasing `max_conditions` or `max_depth` can lead to slow queries or database timeouts. Monitor query performance when adjusting these values.
+</Warning>
+
+## Real-World Examples
+
+### E-commerce: Find Discounted Products
+
+Find active products with a discount, sorted by discount percentage:
+
+```http
+GET /api/v1/products?select=["id","name","price","discount_price"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "discount_price|not null",
+      "stock|>|0"
+    ]
+  },
+  "orderby": [{"discount_price": "asc"}],
+  "pagination": {"page": 1, "pageSize": 20}
+}
+```
+
+### SaaS: Active Subscriptions Expiring Soon
+
+Find subscriptions expiring in the next 30 days:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "expires_at|between|2026-03-05,2026-04-05",
+      "auto_renew|=|false"
+    ]
+  },
+  "orderby": [{"expires_at": "asc"}]
+}
+```
+
+### CRM: High-Value Leads by Region
+
+Find leads with high estimated value in specific regions:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|qualified",
+      "estimated_value|>=|50000",
+      "region|in|North America,Europe"
+    ],
+    "assignedUser": {
+      "and": ["active|=|true"]
+    }
+  },
+  "orderby": [{"estimated_value": "desc"}]
+}
+```
+
+## Troubleshooting
+
+### Filter Not Applied
+
+**Symptom:** Results include records that should be filtered out
+
+**Causes:**
+- Typo in column name (check validation errors)
+- Wrong operator (use `=` not `==`)
+- Incorrect value type (use `true` not `"true"` for booleans)
+
+**Solution:**
+- Enable `LOG_QUERY=true` to see generated SQL
+- Check logs at `storage/logs/rest-generic-class.log`
+
+### Relation Filter Not Working
+
+**Symptom:** Relation filter doesn't affect results
+
+**Causes:**
+- Relation not listed in `MODEL::RELATIONS`
+- Typo in relation name
+- Wrong relation key (use method name, not table name)
+
+**Solution:**
+- Verify relation exists: `php artisan tinker` → `Product::RELATIONS`
+- Check error message for allowed relations list
+
+### Too Many Conditions Error
+
+**Symptom:** 400 error "Maximum conditions exceeded"
+
+**Cause:** Query has more than 100 conditions
+
+**Solution:**
+- Split query into multiple requests
+- Use `in` operator instead of multiple `=` conditions
+- Increase `max_conditions` in config (with caution)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Relation Loading" icon="link" href="/guides/relation-loading">
+    Learn how to efficiently load and filter nested relations
+  </Card>
+  <Card title="Hierarchical Data" icon="sitemap" href="/guides/hierarchical-data">
+    Work with tree structures and parent-child relationships
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/filtering">
+    Complete operator reference and advanced filter patterns
+  </Card>
+  <Card title="Performance" icon="gauge-high" href="/guides/caching">
+    Optimize query performance with caching strategies
+  </Card>
+</CardGroup>
+
+## Evidence
+
+- **File:** `src/Core/Services/BaseService.php`  
+  **Lines:** 1462-1539  
+  Implements `applyOperTree`, `applyFilters`, and relation filter extraction
+
+- **File:** `src/Core/Traits/HasDynamicFilter.php`  
+  **Lines:** 13-252  
+  Shows operator parsing, column validation, and filter application logic
+
+- **File:** `config/rest-generic-class.php`  
+  **Lines:** 17-28  
+  Defines safety limits (max_depth, max_conditions, allowed_operators) and validation settings

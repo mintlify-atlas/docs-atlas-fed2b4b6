@@ -1,0 +1,511 @@
+---
+title: BaseService Class
+description: Understand the service layer that powers REST operations with filtering, relations, pagination, and caching
+---
+
+## Overview
+
+The `BaseService` class handles all business logic for REST operations. It sits between your controller and model, providing:
+
+- **CRUD operations** with validation
+- **Dynamic filtering** via the `oper` parameter
+- **Eager loading** with field selection
+- **Pagination** (standard and cursor-based)
+- **Hierarchical queries** for tree data
+- **Automatic caching** (optional)
+- **Export helpers** for Excel and PDF
+
+## Service Setup
+
+Create a service for each model by extending `BaseService`:
+
+```php
+use Ronu\RestGenericClass\Core\Services\BaseService;
+use App\Models\Product;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+}
+```
+
+That's it! Your service now has all REST capabilities.
+
+## Core Methods
+
+### list_all()
+
+Retrieves a collection of records with optional filtering, relations, and pagination.
+
+```php
+public function list_all($params, $toJson = true): mixed
+```
+
+<ParamField path="params" type="array">
+  Query parameters from the request:
+  - `select` — Column selection
+  - `relations` — Eager load relations
+  - `oper` — Filters (and/or conditions)
+  - `orderby` — Sorting
+  - `pagination` — Page settings
+  - `hierarchy` — Hierarchical mode
+  - `_nested` — Apply relation filters to eager loads
+</ParamField>
+
+<ParamField path="toJson" type="bool" default="true">
+  If `true`, returns `['data' => $results]`. If `false`, returns raw array.
+</ParamField>
+
+**Example:**
+
+```php
+$params = [
+    'select' => ['id', 'name', 'price'],
+    'relations' => ['category:id,name'],
+    'oper' => ['and' => ['status|=|active', 'price|>=|100']],
+    'orderby' => [['price' => 'desc']],
+    'pagination' => ['page' => 1, 'pageSize' => 25]
+];
+
+$result = $service->list_all($params);
+```
+
+### get_one()
+
+Retrieves a single record matching the query.
+
+```php
+public function get_one($params, $toJson = true): mixed
+```
+
+Same parameters as `list_all()`, but returns the first matching record:
+
+```php
+$params = [
+    'oper' => ['and' => ['sku|=|ABC123']],
+    'relations' => ['category', 'reviews']
+];
+
+$product = $service->get_one($params);
+// Returns: ['data' => Product]
+```
+
+### create()
+
+Creates one or more records.
+
+```php
+public function create(array $params): array
+```
+
+**Single record:**
+
+```php
+$result = $service->create([
+    'name' => 'Wireless Mouse',
+    'price' => 29.99,
+    'stock' => 100,
+    'category_id' => 5
+]);
+
+// Returns: ['success' => true, 'model' => [...]]
+```
+
+**Batch creation:**
+
+```php
+$result = $service->create([
+    'product' => [
+        ['name' => 'Item 1', 'price' => 10],
+        ['name' => 'Item 2', 'price' => 20]
+    ]
+]);
+
+// Returns: ['success' => true, ['model' => ...], ['model' => ...]]
+```
+
+<Note>
+The key name (`product`) must match your model's `const MODEL` value.
+</Note>
+
+### update()
+
+Updates an existing record.
+
+```php
+public function update(array $attributes, $id, $validate = false): array
+```
+
+<ParamField path="attributes" type="array">
+  Fields to update (only provided fields are changed).
+</ParamField>
+
+<ParamField path="id" type="mixed">
+  The primary key value or custom field key if `fieldKeyUpdate` is set.
+</ParamField>
+
+<ParamField path="validate" type="bool" default="false">
+  If `true`, runs model validation before saving.
+</ParamField>
+
+**Example:**
+
+```php
+$result = $service->update(
+    ['price' => 24.99, 'stock' => 85],
+    $productId
+);
+
+// Returns: ['success' => true, 'model' => [...]]
+```
+
+**Partial updates** are supported — only send the fields you want to change:
+
+```php
+// Only update stock, leave price unchanged
+$service->update(['stock' => 50], $productId);
+```
+
+### destroy()
+
+Deletes a record by ID.
+
+```php
+public function destroy($id): array
+```
+
+```php
+$result = $service->destroy($productId);
+
+// Returns: ['success' => true, 'model' => Product]
+```
+
+Supports soft deletes if your model uses `SoftDeletes` trait.
+
+## Query Building with process_query()
+
+The `process_query()` method is the heart of the service layer. It transforms REST parameters into an Eloquent query.
+
+From **BaseService.php:350-398**:
+
+```php
+public function process_query($params, $query): Builder
+{
+    // 1. Apply legacy equality filters (attr/eq)
+    if (isset($params["attr"])) {
+        $query = $this->eq_attr($query, $params['attr']);
+    }
+    
+    // 2. Parse oper parameter
+    $oper = $params['oper'] ?? null;
+    if (is_string($oper)) {
+        $decoded = json_decode($oper, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $oper = $decoded;
+        }
+    }
+    
+    // 3. Apply oper tree (includes whereHas for relations)
+    if (!empty($oper)) {
+        $query = $this->applyOperTree($query, $oper, 'and', $this->modelClass);
+    }
+    
+    // 4. Eager load relations with field selection
+    if (isset($params['relations'])) {
+        $query = $this->relations(
+            $query,
+            $params['relations'],
+            $params['_nested'] ? $oper : null
+        );
+    }
+    
+    // 5. Select clause for main model
+    if (isset($params['select'])) {
+        $query = $query->select($params['select']);
+    } else {
+        $query = $query->select($this->modelClass->getTable() . '.*');
+    }
+    
+    // 6. Order by
+    if (isset($params['orderby'])) {
+        $query = $this->order_by($query, $params['orderby']);
+    }
+    
+    return $query;
+}
+```
+
+### Order of Execution
+
+1. **Legacy filters** (`attr`) — Simple equality conditions
+2. **Dynamic filters** (`oper`) — Complex filtering tree with `whereHas` for relations
+3. **Eager loading** (`relations`) — Loads related data (optionally filtered if `_nested=true`)
+4. **Column selection** (`select`) — Limits returned columns
+5. **Sorting** (`orderby`) — Applies `ORDER BY` clauses
+6. **Pagination** — Applied by `process_all()` after `process_query()`
+
+## Filtering System
+
+The service uses `HasDynamicFilter` trait for powerful query building.
+
+### Filter Operators
+
+From **HasDynamicFilter.php:35-57**:
+
+```php
+'=', '!=', '<>', '<', '>', '<=', '>=',
+'like', 'not like', 'ilike', 'not ilike',
+'in', 'not in',
+'between', 'not between',
+'date', 'not date',
+'null', 'not null',
+'exists', 'not exists',
+'regexp', 'not regexp'
+```
+
+### Filter Format
+
+Conditions use pipe-separated format:
+
+```
+field|operator|value
+```
+
+**Example filters:**
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|100",
+      "category_id|in|1,2,3",
+      "created_at|date|2024-01-01",
+      "name|like|%wireless%"
+    ]
+  }
+}
+```
+
+See [Dynamic Filtering](/core/filtering) for complete documentation.
+
+## Relation Loading
+
+The `relations()` method handles eager loading with optional field selection.
+
+**Basic syntax:**
+
+```json
+{
+  "relations": ["category", "reviews"]
+}
+```
+
+**With field selection:**
+
+```json
+{
+  "relations": [
+    "category:id,name",
+    "reviews:id,rating,comment"
+  ]
+}
+```
+
+**Nested relations:**
+
+```json
+{
+  "relations": [
+    "category.parent:id,name",
+    "reviews.user:id,name"
+  ]
+}
+```
+
+See [Relation Loading](/core/relations) for advanced usage.
+
+## Caching
+
+BaseService includes built-in caching for read operations.
+
+### Configuration
+
+From **config/rest-generic-class.php**:
+
+```php
+'cache' => [
+    'enabled' => env('REST_CACHE_ENABLED', false),
+    'store' => env('REST_CACHE_STORE', 'redis'),
+    'ttl' => (int)env('REST_CACHE_TTL', 60),
+    'ttl_by_method' => [
+        'list_all' => 60,
+        'get_one' => 30,
+    ],
+    'cacheable_methods' => ['list_all', 'get_one'],
+    'vary' => [
+        'headers' => ['Accept-Language', 'X-Tenant-Id'],
+    ],
+]
+```
+
+### Cache Keys
+
+Cache keys are deterministic and include:
+- Operation name (`list_all`, `get_one`)
+- Model class
+- Query parameters (`select`, `oper`, `relations`, etc.)
+- User ID (from `auth()->id()`)
+- Vary headers (locale, tenant, etc.)
+- Cache version (for invalidation)
+
+From **BaseService.php:1127-1151**:
+
+```php
+private function buildCacheKey(string $operation, array $params): string
+{
+    $request = request();
+    $route = $request?->route();
+    $headersToVary = config('rest-generic-class.cache.vary.headers', []);
+    $varyHeaders = [];
+    
+    foreach ($headersToVary as $header) {
+        $varyHeaders[$header] = $request?->header($header);
+    }
+    
+    $fingerprint = [
+        'op' => $operation,
+        'model' => get_class($this->modelClass),
+        'route' => $route?->getName() ?? $request?->path() ?? 'cli',
+        'method' => $request?->method(),
+        'query' => $request?->query(),
+        'headers' => $varyHeaders,
+        'user' => auth()->id(),
+        'params' => $params,
+        'version' => $this->getCacheVersion(),
+    ];
+    
+    return $this->cachePrefix . ':' . sha1(json_encode($fingerprint));
+}
+```
+
+### Cache Invalidation
+
+The cache version bumps automatically after write operations (`create`, `update`, `destroy`), invalidating all cached queries for that model.
+
+### Per-Request Control
+
+```json
+{
+  "cache": false,
+  "oper": {"and": ["status|=|active"]}
+}
+```
+
+Or set custom TTL:
+
+```json
+{
+  "cache_ttl": 300,
+  "relations": ["category"]
+}
+```
+
+## Export Helpers
+
+<Warning>
+Export features require optional packages:
+```bash
+composer require maatwebsite/excel barryvdh/laravel-dompdf
+```
+</Warning>
+
+### exportExcel()
+
+```php
+public function exportExcel($params)
+```
+
+```php
+$params = [
+    'select' => ['id', 'name', 'email', 'created_at'],
+    'columns' => ['name', 'email'], // Columns to export
+    'oper' => ['and' => ['active|=|1']],
+    'filename' => 'active-users.xlsx'
+];
+
+return $service->exportExcel($params);
+```
+
+### exportPdf()
+
+```php
+public function exportPdf($params)
+```
+
+```php
+$params = [
+    'columns' => ['name', 'email', 'created_at'],
+    'oper' => ['and' => ['active|=|1']],
+    'template' => 'reports.users', // Blade view
+    'filename' => 'users-report.pdf'
+];
+
+return $service->exportPdf($params);
+```
+
+The Blade template receives:
+- `$data` — Array of records
+- `$columns` — Column names to display
+- `$model` — Model instance
+- `$params` — Original parameters
+
+## Complete Example
+
+```php
+use Ronu\RestGenericClass\Core\Services\BaseService;
+use App\Models\Product;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+    
+    // Custom method example
+    public function getTopRated(int $limit = 10)
+    {
+        $params = [
+            'select' => ['id', 'name', 'price', 'rating'],
+            'relations' => ['category:id,name'],
+            'oper' => ['and' => ['rating|>=|4.5']],
+            'orderby' => [['rating' => 'desc']],
+            'pagination' => ['page' => 1, 'pageSize' => $limit]
+        ];
+        
+        return $this->list_all($params);
+    }
+    
+    // Override validation
+    public function create(array $params): array
+    {
+        // Custom business logic before creation
+        if (isset($params['sku'])) {
+            $params['sku'] = strtoupper($params['sku']);
+        }
+        
+        return parent::create($params);
+    }
+}
+```
+
+## Next Steps
+
+- [Controllers](/core/controllers) — Connect services to REST endpoints
+- [Dynamic Filtering](/core/filtering) — Master the `oper` parameter
+- [Relation Loading](/core/relations) — Advanced eager loading techniques
+- [Hierarchical Data](/core/hierarchy) — Work with tree structures

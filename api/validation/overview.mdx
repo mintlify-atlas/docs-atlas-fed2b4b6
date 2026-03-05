@@ -1,0 +1,313 @@
+---
+title: Validation Overview
+description: Custom Laravel validation rules for complex data validation scenarios
+---
+
+## Introduction
+
+Rest Generic Class provides a comprehensive set of custom validation rules designed for complex database validation scenarios commonly found in REST APIs. These rules extend Laravel's built-in validation with specialized functionality for:
+
+- Database existence checks with complex conditions
+- Pivot table uniqueness validation
+- Bulk/array operation validation
+- Composite uniqueness constraints
+- Array size validation with custom messages
+
+## Available Rules
+
+### Existence Validation
+
+Rules for validating that IDs exist in database tables with various conditions:
+
+<CardGroup cols={2}>
+  <Card title="IdsExistInTable" icon="database" href="/api/validation/ids-exist-rules#idsexistintable">
+    Validate that IDs exist in a specific table
+  </Card>
+  <Card title="IdsExistNotDelete" icon="trash-can" href="/api/validation/ids-exist-rules#idsexistnotdelete">
+    Validate IDs exist and are not soft-deleted
+  </Card>
+  <Card title="IdsExistWithAnyStatus" icon="circle-check" href="/api/validation/ids-exist-rules#idsexistwaithanystatus">
+    Validate IDs exist with specific status values
+  </Card>
+  <Card title="IdsExistWithDateRange" icon="calendar" href="/api/validation/ids-exist-rules#idsexistwithdaterange">
+    Validate IDs exist within a date range
+  </Card>
+  <Card title="IdsWithCustomQuery" icon="code" href="/api/validation/ids-exist-rules#idswithcustomquery">
+    Validate IDs with a custom query callback
+  </Card>
+</CardGroup>
+
+### Uniqueness Validation
+
+Rules for ensuring data uniqueness in various contexts:
+
+<CardGroup cols={2}>
+  <Card title="UniqueInPivot" icon="link" href="/api/validation/unique-rules#uniqueinpivot">
+    Validate uniqueness in many-to-many relationships via pivot tables
+  </Card>
+  <Card title="UniqueInPivotArray" icon="list" href="/api/validation/unique-rules#uniqueinpivotarray">
+    Bulk validation of pivot table uniqueness
+  </Card>
+  <Card title="UniqueCompositeInArray" icon="layer-group" href="/api/validation/unique-rules#uniquecompositeinarray">
+    Validate composite uniqueness for bulk operations
+  </Card>
+  <Card title="ArrayCount" icon="hashtag" href="/api/validation/unique-rules#arraycount">
+    Validate array element count with custom messages
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Database Connection
+
+All database validation rules accept a connection parameter:
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+
+'user_ids' => [
+    'required',
+    'array',
+    new IdsExistInTable(
+        connection: 'mysql',  // or config('database.default')
+        table: 'users',
+        column: 'id'
+    ),
+],
+```
+
+### Array vs Single Value
+
+Most rules automatically handle both single values and arrays:
+
+```php
+// Single ID
+'category_id' => ['required', new IdsExistInTable('mysql', 'categories')],
+
+// Array of IDs
+'category_ids' => ['required', 'array', new IdsExistInTable('mysql', 'categories')],
+```
+
+### Additional Conditions
+
+Many rules support additional WHERE conditions:
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+
+'product_ids' => [
+    'required',
+    'array',
+    new IdsExistInTable(
+        connection: 'mysql',
+        table: 'products',
+        column: 'id',
+        additionalConditions: [
+            'is_active' => true,
+            'deleted_at' => null,
+        ]
+    ),
+],
+```
+
+## Usage in FormRequests
+
+### Basic Example
+
+```php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivot;
+
+class AssignRolesRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'user_id' => [
+                'required',
+                'integer',
+                new IdsExistInTable(
+                    connection: config('database.default'),
+                    table: 'users',
+                    column: 'id'
+                ),
+            ],
+            'role_ids' => [
+                'required',
+                'array',
+                'min:1',
+                new IdsExistInTable(
+                    connection: config('database.default'),
+                    table: 'roles',
+                    column: 'id'
+                ),
+            ],
+        ];
+    }
+}
+```
+
+### Advanced Example with Multiple Rules
+
+```php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Ronu\RestGenericClass\Core\Rules\IdsExistNotDelete;
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivotArray;
+use Ronu\RestGenericClass\Core\Rules\ArrayCount;
+
+class BulkUpdateAddressesRequest extends FormRequest
+{
+    protected string $connection;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->connection = config('database.default');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'addresses' => [
+                'required',
+                'array',
+                new ArrayCount(
+                    min: 1,
+                    max: 10,
+                    messages: [
+                        'onMin' => 'Please provide at least one address.',
+                        'onMax' => 'You can update a maximum of 10 addresses at once.',
+                    ]
+                ),
+            ],
+            'addresses.*.id' => [
+                'required',
+                'integer',
+                new IdsExistNotDelete(
+                    connection: $this->connection,
+                    table: 'addresses',
+                    column: 'id'
+                ),
+            ],
+            'addresses.*.phone' => [
+                'nullable',
+                'string',
+                'max:64',
+                new UniqueInPivotArray(
+                    connection: $this->connection,
+                    mainTable: 'addresses',
+                    pivotTable: 'user_addresses',
+                    pivotForeignKey: 'address_id',
+                    pivotOwnerKey: 'user_id',
+                    ownerValue: auth()->id(),
+                    column: 'phone',
+                    arrayKey: 'addresses',
+                    ignoreField: 'id'
+                ),
+            ],
+        ];
+    }
+}
+```
+
+## Error Messages
+
+All rules provide clear, actionable error messages:
+
+```json
+{
+  "message": "The given data was invalid.",
+  "errors": {
+    "user_ids": [
+      "The following IDs do not exist: 42, 99"
+    ],
+    "addresses.0.phone": [
+      "The phone '+1-555-0001' at addresses[0] has already been taken."
+    ]
+  }
+}
+```
+
+## Performance Considerations
+
+<Tip>
+  All validation rules use efficient database queries with proper indexing support. Batch validations use single queries with `whereIn` clauses rather than multiple individual queries.
+</Tip>
+
+### Efficient Bulk Validation
+
+```php
+// BAD: Multiple queries
+foreach ($ids as $id) {
+    // Laravel's built-in exists rule queries once per ID
+    'id' => 'exists:users,id'
+}
+
+// GOOD: Single query
+'ids' => [
+    'array',
+    new IdsExistInTable('mysql', 'users', 'id')
+]
+// Executes: SELECT id FROM users WHERE id IN (1, 2, 3, ...)
+```
+
+## Testing
+
+Example test for custom validation rules:
+
+```php
+namespace Tests\Feature\Validation;
+
+use Tests\TestCase;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use App\Models\User;
+use App\Models\Role;
+
+class RoleAssignmentValidationTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_validates_existing_user_ids()
+    {
+        $response = $this->postJson('/api/users/123/roles', [
+            'role_ids' => [999], // Non-existent role
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['role_ids']);
+    }
+
+    public function test_accepts_valid_role_ids()
+    {
+        $user = User::factory()->create();
+        $role = Role::factory()->create();
+
+        $response = $this->postJson("/api/users/{$user->id}/roles", [
+            'role_ids' => [$role->id],
+        ]);
+
+        $response->assertStatus(200);
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="ID Existence Rules" icon="database" href="/api/validation/ids-exist-rules">
+    Learn about validating ID existence with various conditions
+  </Card>
+  <Card title="Uniqueness Rules" icon="fingerprint" href="/api/validation/unique-rules">
+    Explore pivot table and composite uniqueness validation
+  </Card>
+</CardGroup>

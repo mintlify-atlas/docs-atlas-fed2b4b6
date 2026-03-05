@@ -1,0 +1,371 @@
+---
+title: Cache Strategy
+description: Configure response caching with Redis, database, or any Laravel cache store
+---
+
+The Rest Generic Class package implements a **store-agnostic cache strategy** using Laravel's native cache system. This allows you to use Redis, database, file, Memcached, or any other Laravel-supported cache driver without code changes.
+
+## How Cache Works
+
+Cache is applied in `BaseService` for read operations:
+
+- **`list_all`** - Caches paginated list responses
+- **`get_one`** - Caches individual resource responses
+
+Write operations (`create`, `update`, `destroy`, `destroybyid`) automatically invalidate the cache by bumping a model-level cache version.
+
+### Cache Key Fingerprint
+
+The cache key is built from multiple factors to ensure correct cache isolation:
+
+| Factor | Purpose |
+|--------|--------|
+| Model class | Separate cache per resource type |
+| Operation | Different keys for `list_all` vs `get_one` |
+| Route/path | Different endpoints get different cache |
+| Query parameters | Different filters/selects/relations get different cache |
+| Authenticated user | User-specific data gets user-specific cache |
+| Request headers | Multi-tenant and locale-aware caching |
+| Model cache version | Automatic invalidation on writes |
+
+This prevents cache pollution where one query's results might incorrectly serve another query.
+
+## Enabling Cache
+
+### 1. Configure Environment
+
+Set these variables in your `.env` file:
+
+```env
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=60
+```
+
+<Note>
+Cache is **disabled by default** (`REST_CACHE_ENABLED=false`). You must explicitly enable it.
+</Note>
+
+### 2. Select Cache Store
+
+The `REST_CACHE_STORE` variable accepts any Laravel cache driver:
+
+<CodeGroup>
+```env Redis
+REST_CACHE_STORE=redis
+```
+
+```env Database
+REST_CACHE_STORE=database
+```
+
+```env File
+REST_CACHE_STORE=file
+```
+
+```env Memcached
+REST_CACHE_STORE=memcached
+```
+
+```env DynamoDB
+REST_CACHE_STORE=dynamodb
+```
+</CodeGroup>
+
+<Warning>
+The `array` store only persists cache for the current request lifecycle. Don't use it in production.
+</Warning>
+
+### 3. Configure Store in Laravel
+
+Ensure your selected cache store is properly configured in `config/cache.php`:
+
+```php
+'stores' => [
+    'redis' => [
+        'driver' => 'redis',
+        'connection' => 'cache',
+        'lock_connection' => 'default',
+    ],
+    'database' => [
+        'driver' => 'database',
+        'table' => 'cache',
+        'connection' => null,
+        'lock_connection' => null,
+    ],
+    // ...
+],
+```
+
+For database caching, run the migration:
+
+```bash
+php artisan cache:table
+php artisan migrate
+```
+
+## TTL Configuration
+
+### Default TTL
+
+Set a baseline TTL for all cached responses:
+
+```env
+REST_CACHE_TTL=60
+```
+
+### Method-Specific TTLs
+
+Override TTL for specific operations:
+
+```env
+REST_CACHE_TTL_LIST=300    # 5 minutes for list endpoints
+REST_CACHE_TTL_ONE=600     # 10 minutes for single-item reads
+```
+
+**Configuration structure:**
+
+```php
+'cache' => [
+    'ttl' => (int)env('REST_CACHE_TTL', 60),
+    'ttl_by_method' => [
+        'list_all' => (int)env('REST_CACHE_TTL_LIST', 60),
+        'get_one' => (int)env('REST_CACHE_TTL_ONE', 30),
+    ],
+],
+```
+
+### TTL Strategy Recommendations
+
+| Data Type | Recommended TTL | Reason |
+|-----------|----------------|--------|
+| Frequently updated | 30-60 seconds | Balance freshness and performance |
+| Moderately updated | 5-15 minutes | Reduce database load significantly |
+| Rarely updated | 30-60 minutes | Maximize cache hit rate |
+| Static/reference data | 1-24 hours | Near-permanent caching |
+
+<Note>
+List endpoints (`list_all`) often have shorter TTLs than single-item reads (`get_one`) because lists change more frequently when new items are added.
+</Note>
+
+## Per-Request Cache Control
+
+Clients can control caching behavior on individual requests using query parameters.
+
+### Disable Cache for One Request
+
+```http
+GET /api/v1/products?cache=false
+```
+
+This bypasses the cache entirely and always queries fresh data from the database.
+
+### Override TTL for One Request
+
+```http
+GET /api/v1/products?cache_ttl=120
+```
+
+This caches the response for 120 seconds, overriding the configured TTL.
+
+### Combined Example
+
+```http
+GET /api/v1/products?select=["id","name"]&cache_ttl=300
+```
+
+Cache this specific query shape for 5 minutes.
+
+<Warning>
+Per-request cache control is useful for debugging and special cases, but shouldn't be relied upon for normal operation. Configure appropriate default TTLs instead.
+</Warning>
+
+## Multi-Tenant and Locale Awareness
+
+### Vary by Headers
+
+By default, cache keys vary by specific request headers to prevent cross-tenant or cross-locale data leaks:
+
+```php
+'cache' => [
+    'vary' => [
+        'headers' => ['Accept-Language', 'X-Tenant-Id'],
+    ],
+],
+```
+
+**How it works:**
+
+- Request with `Accept-Language: en` gets a different cache key than `Accept-Language: es`
+- Request with `X-Tenant-Id: tenant-a` gets a different cache key than `X-Tenant-Id: tenant-b`
+
+### Customizing Vary Headers
+
+If your application uses different headers for tenant identification, update the configuration:
+
+```php
+'cache' => [
+    'vary' => [
+        'headers' => [
+            'Accept-Language',
+            'X-Organization-Id',  // Custom tenant header
+            'X-Client-Version',    // Version-specific caching
+        ],
+    ],
+],
+```
+
+<Warning>
+**Security critical:** If your application is multi-tenant, ensure your tenant identification header is listed in `cache.vary.headers`. Otherwise, users may see cached data from other tenants.
+</Warning>
+
+## Cache Invalidation
+
+### Automatic Version-Based Invalidation
+
+The package uses a **model-level cache versioning** strategy:
+
+1. Each model has a version key stored in cache (e.g., `cache_version:products`)
+2. Every cache key includes the current model version
+3. On write operations (`create`, `update`, `destroy`), the version is bumped
+4. Existing cache keys become stale automatically without explicit deletion
+
+**Example flow:**
+
+```
+1. GET /products → Cache key: products:v1:list:...
+2. POST /products (create) → Bump version to v2
+3. GET /products → Cache key: products:v2:list:... (cache miss, queries DB)
+```
+
+### Manual Cache Clearing
+
+Clear all application cache:
+
+```bash
+php artisan cache:clear
+```
+
+Clear cache for a specific store:
+
+```bash
+php artisan cache:clear --store=redis
+```
+
+<Note>
+You rarely need to manually clear cache because version-based invalidation handles writes automatically.
+</Note>
+
+## Cache Without Tags Support
+
+The package's version-based invalidation strategy works with **all cache stores**, including those that don't support tags (like `file`, `database`, `memcached`).
+
+This is more flexible than tag-based invalidation, which only works with Redis and a few other stores.
+
+## Example Configurations
+
+### High-Traffic Production (Redis)
+
+```env
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=300
+REST_CACHE_TTL_LIST=300
+REST_CACHE_TTL_ONE=600
+```
+
+**Best for:** APIs with heavy read traffic and moderate write traffic
+
+### Simple Staging (File)
+
+```env
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=file
+REST_CACHE_TTL=120
+REST_CACHE_TTL_LIST=120
+REST_CACHE_TTL_ONE=180
+```
+
+**Best for:** Staging environments without Redis infrastructure
+
+### Distributed Applications (Database)
+
+```env
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=database
+REST_CACHE_TTL=180
+REST_CACHE_TTL_LIST=180
+REST_CACHE_TTL_ONE=300
+```
+
+**Best for:** Multi-server setups sharing a database but without Redis
+
+### Development (Disabled)
+
+```env
+REST_CACHE_ENABLED=false
+```
+
+**Best for:** Local development where you always want fresh data
+
+## Monitoring Cache Performance
+
+Track these metrics to optimize your cache configuration:
+
+| Metric | Target | Action if Below Target |
+|--------|--------|------------------------|
+| Cache hit rate | > 80% | Increase TTL |
+| Average response time | < 100ms | Enable caching or increase TTL |
+| Cache memory usage | < 80% capacity | Reduce TTL or add more cache capacity |
+| Database query count | Significant reduction | Cache is working well |
+
+## Troubleshooting
+
+### Cache Not Working
+
+<AccordionGroup>
+  <Accordion title="Verify cache is enabled">
+    Check that `REST_CACHE_ENABLED=true` in `.env` and configuration is not cached with old values.
+    
+    ```bash
+    php artisan config:clear
+    php artisan config:cache
+    ```
+  </Accordion>
+  
+  <Accordion title="Check cache store configuration">
+    Ensure the store specified in `REST_CACHE_STORE` exists in `config/cache.php` and is properly configured.
+    
+    For Redis, verify connection:
+    ```bash
+    php artisan tinker
+    >>> Cache::store('redis')->get('test')
+    ```
+  </Accordion>
+  
+  <Accordion title="Verify cache permissions (file store)">
+    If using file cache, ensure `storage/framework/cache` is writable:
+    ```bash
+    chmod -R 775 storage/framework/cache
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Cache Serving Stale Data
+
+If cache persists after updates, check:
+
+1. **Version bump logic** - Ensure write operations are using `BaseService` methods
+2. **Custom write logic** - If you bypass `BaseService`, manually bump the cache version
+3. **TTL too long** - Reduce TTL if data staleness is unacceptable
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference of cache-related environment variables
+  </Card>
+  <Card title="Validation Cache" icon="shield-check" href="/configuration/validation">
+    Configure caching for validation queries
+  </Card>
+</CardGroup>

@@ -1,0 +1,659 @@
+---
+title: Uniqueness Rules
+description: Validation rules for pivot table and composite uniqueness constraints
+---
+
+## Overview
+
+The Uniqueness validation rules provide specialized validation for many-to-many relationships, bulk operations, and composite uniqueness constraints. These rules handle complex scenarios that Laravel's built-in `unique` rule cannot address.
+
+## UniqueInPivot
+
+Validates that a column value is unique within the scope of a many-to-many relationship by checking through a pivot table. Designed for **single operations** (create/update).
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="mainTable" type="string" required>
+  Main table containing the column to validate (e.g., `'addresses'`)
+</ParamField>
+
+<ParamField path="pivotTable" type="string" required>
+  Pivot table that links main table to owner (e.g., `'user_addresses'`)
+</ParamField>
+
+<ParamField path="pivotForeignKey" type="string" required>
+  Foreign key in pivot table pointing to main table (e.g., `'address_id'`)
+</ParamField>
+
+<ParamField path="pivotOwnerKey" type="string" required>
+  Foreign key in pivot table pointing to owner (e.g., `'user_id'`)
+</ParamField>
+
+<ParamField path="ownerValue" type="mixed" required>
+  Owner ID value (e.g., `auth()->id()`)
+</ParamField>
+
+<ParamField path="column" type="string" required>
+  Column in main table to check for uniqueness (e.g., `'phone'`)
+</ParamField>
+
+<ParamField path="mainTablePk" type="string" default="id">
+  Primary key of main table
+</ParamField>
+
+<ParamField path="ignoreValue" type="mixed" default="null">
+  Primary key value to ignore (for updates: `$this->route('id')`)
+</ParamField>
+
+### Create Example
+
+```php
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivot;
+
+// Scenario: User 42 is creating a new address
+// Rule: Phone must be unique among user 42's addresses
+
+public function rules(): array
+{
+    return [
+        'phone' => [
+            'nullable',
+            'string',
+            'max:64',
+            new UniqueInPivot(
+                connection: config('database.default'),
+                mainTable: 'addresses',
+                pivotTable: 'user_addresses',
+                pivotForeignKey: 'address_id',
+                pivotOwnerKey: 'user_id',
+                ownerValue: auth()->id(),  // 42
+                column: 'phone',
+                // ignoreValue omitted - this is a create
+            ),
+        ],
+    ];
+}
+```
+
+**SQL Executed:**
+```sql
+SELECT EXISTS(
+    SELECT 1 FROM addresses AS _main
+    INNER JOIN user_addresses AS _pivot
+        ON _pivot.address_id = _main.id
+    WHERE _main.phone = '+1-555-0001'
+      AND _pivot.user_id = 42
+)
+```
+
+### Update Example
+
+```php
+// Scenario: User 42 is updating address ID 7
+// Rule: Phone must be unique among user 42's addresses, except for address 7 itself
+
+public function rules(): array
+{
+    return [
+        'phone' => [
+            'nullable',
+            'string',
+            'max:64',
+            new UniqueInPivot(
+                connection: config('database.default'),
+                mainTable: 'addresses',
+                pivotTable: 'user_addresses',
+                pivotForeignKey: 'address_id',
+                pivotOwnerKey: 'user_id',
+                ownerValue: auth()->id(),      // 42
+                column: 'phone',
+                ignoreValue: $this->route('id'), // 7
+            ),
+        ],
+    ];
+}
+```
+
+**SQL Executed:**
+```sql
+SELECT EXISTS(
+    SELECT 1 FROM addresses AS _main
+    INNER JOIN user_addresses AS _pivot
+        ON _pivot.address_id = _main.id
+    WHERE _main.phone = '+1-555-0001'
+      AND _pivot.user_id = 42
+      AND _main.id != 7  -- Ignore own record
+)
+```
+
+### Schema Support
+
+```php
+// PostgreSQL with schema
+new UniqueInPivot(
+    connection: 'pgsql',
+    mainTable: 'security.addresses',      // Schema prefix
+    pivotTable: 'security.user_addresses',
+    pivotForeignKey: 'address_id',
+    pivotOwnerKey: 'user_id',
+    ownerValue: auth()->id(),
+    column: 'phone',
+)
+```
+
+## UniqueInPivotArray
+
+Validates column uniqueness within a many-to-many relationship for **bulk (array) operations**. Checks both intra-array duplicates and database conflicts.
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="mainTable" type="string" required>
+  Main table containing the column to validate
+</ParamField>
+
+<ParamField path="pivotTable" type="string" required>
+  Pivot table that links main table to owner
+</ParamField>
+
+<ParamField path="pivotForeignKey" type="string" required>
+  Foreign key in pivot table pointing to main table
+</ParamField>
+
+<ParamField path="pivotOwnerKey" type="string" required>
+  Foreign key in pivot table pointing to owner
+</ParamField>
+
+<ParamField path="ownerValue" type="mixed" required>
+  Owner ID value
+</ParamField>
+
+<ParamField path="column" type="string" required>
+  Column to check for uniqueness
+</ParamField>
+
+<ParamField path="arrayKey" type="string" required>
+  Root array key in request data (e.g., `'addresses'`)
+</ParamField>
+
+<ParamField path="mainTablePk" type="string" default="id">
+  Primary key of main table
+</ParamField>
+
+<ParamField path="ignoreField" type="string|null" default="null">
+  Field containing primary key to ignore (for updates: `'id'`)
+</ParamField>
+
+### Bulk Create Example
+
+```php
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivotArray;
+
+// Scenario: User 42 is creating multiple addresses at once
+// Rule: Each phone must be unique among user 42's existing addresses
+//       AND unique within the request itself
+
+public function rules(): array
+{
+    return [
+        'addresses' => ['required', 'array'],
+        'addresses.*.phone' => [
+            'nullable',
+            'string',
+            'max:64',
+            new UniqueInPivotArray(
+                connection: config('database.default'),
+                mainTable: 'addresses',
+                pivotTable: 'user_addresses',
+                pivotForeignKey: 'address_id',
+                pivotOwnerKey: 'user_id',
+                ownerValue: auth()->id(),
+                column: 'phone',
+                arrayKey: 'addresses',
+                // ignoreField omitted - this is a create
+            ),
+        ],
+    ];
+}
+```
+
+**Request:**
+```json
+{
+  "addresses": [
+    { "phone": "+1-555-8888", "city": "Miami" },
+    { "phone": "+1-555-8888", "city": "NYC" }
+  ]
+}
+```
+
+**Error:**
+```json
+{
+  "errors": {
+    "addresses.0.phone": [
+      "The phone '+1-555-8888' is duplicated in the request at addresses[0]."
+    ],
+    "addresses.1.phone": [
+      "The phone '+1-555-8888' is duplicated in the request at addresses[1]."
+    ]
+  }
+}
+```
+
+### Bulk Update Example
+
+```php
+// Scenario: User 42 is updating multiple addresses
+// Each address can keep its own phone, but can't take another address's phone
+
+public function rules(): array
+{
+    return [
+        'addresses' => ['required', 'array'],
+        'addresses.*.id' => ['required', 'integer'],
+        'addresses.*.phone' => [
+            'nullable',
+            'string',
+            'max:64',
+            new UniqueInPivotArray(
+                connection: config('database.default'),
+                mainTable: 'addresses',
+                pivotTable: 'user_addresses',
+                pivotForeignKey: 'address_id',
+                pivotOwnerKey: 'user_id',
+                ownerValue: auth()->id(),
+                column: 'phone',
+                arrayKey: 'addresses',
+                ignoreField: 'id',  // Ignore each item's own ID
+            ),
+        ],
+    ];
+}
+```
+
+**Valid Request:**
+```json
+{
+  "addresses": [
+    { "id": 7, "phone": "+1-555-0001", "city": "Miami" },
+    { "id": 9, "phone": "+1-555-0099", "city": "Chicago" }
+  ]
+}
+```
+
+**Invalid Request:**
+```json
+{
+  "addresses": [
+    { "id": 7, "phone": "+1-555-0001", "city": "Miami" },
+    { "id": 9, "phone": "+1-555-0001", "city": "Chicago" }
+  ]
+}
+```
+
+**Error:**
+```json
+{
+  "errors": {
+    "addresses.0.phone": [
+      "The phone '+1-555-0001' is duplicated in the request at addresses[0]."
+    ]
+  }
+}
+```
+
+## UniqueCompositeInArray
+
+Validates uniqueness of a column in a database table for bulk operations, supporting composite conditions. Simpler than `UniqueInPivotArray` when pivot tables aren't involved.
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="table" type="string" required>
+  Table name to check
+</ParamField>
+
+<ParamField path="column" type="string" required>
+  Column to check for uniqueness
+</ParamField>
+
+<ParamField path="arrayKey" type="string" required>
+  Root array key in request data
+</ParamField>
+
+<ParamField path="conditions" type="array" default="[]">
+  Additional WHERE conditions (composite key)
+</ParamField>
+
+<ParamField path="ignoreField" type="string|null" default="null">
+  Field containing primary key to ignore (for updates)
+</ParamField>
+
+### Bulk Create Example
+
+```php
+use Ronu\RestGenericClass\Core\Rules\UniqueCompositeInArray;
+
+// Scenario: Creating multiple states within a country
+// Rule: State name must be unique within that country
+
+public function rules(): array
+{
+    return [
+        'states' => ['required', 'array'],
+        'states.*.name' => [
+            'required',
+            'string',
+            'max:255',
+            new UniqueCompositeInArray(
+                connection: config('database.default'),
+                table: 'states',
+                column: 'name',
+                arrayKey: 'states',
+                conditions: [
+                    'country_id' => $this->country_id,
+                ],
+            ),
+        ],
+    ];
+}
+```
+
+**Request:**
+```json
+{
+  "country_id": 1,
+  "states": [
+    { "name": "California", "code": "CA" },
+    { "name": "Texas", "code": "TX" }
+  ]
+}
+```
+
+### Bulk Update Example
+
+```php
+// Allow updating state names while checking uniqueness
+
+public function rules(): array
+{
+    return [
+        'states' => ['required', 'array'],
+        'states.*.id' => ['required', 'integer'],
+        'states.*.name' => [
+            'required',
+            'string',
+            'max:255',
+            new UniqueCompositeInArray(
+                connection: config('database.default'),
+                table: 'states',
+                column: 'name',
+                arrayKey: 'states',
+                conditions: [
+                    'country_id' => $this->country_id,
+                ],
+                ignoreField: 'id',  // Ignore each state's own ID
+            ),
+        ],
+    ];
+}
+```
+
+### Multi-Tenant Example
+
+```php
+// Ensure product SKUs are unique per organization
+
+public function rules(): array
+{
+    return [
+        'products' => ['required', 'array'],
+        'products.*.sku' => [
+            'required',
+            'string',
+            new UniqueCompositeInArray(
+                connection: config('database.default'),
+                table: 'products',
+                column: 'sku',
+                arrayKey: 'products',
+                conditions: [
+                    'organization_id' => auth()->user()->organization_id,
+                    'deleted_at' => null,
+                ],
+            ),
+        ],
+    ];
+}
+```
+
+## ArrayCount
+
+Validates that an array contains between min and max elements, with support for custom messages and token replacement.
+
+### Constructor Parameters
+
+<ParamField path="min" type="int|null" default="null">
+  Minimum number of items (inclusive)
+</ParamField>
+
+<ParamField path="max" type="int|null" default="null">
+  Maximum number of items (inclusive)
+</ParamField>
+
+<ParamField path="message" type="string|null" default="null">
+  Single custom message for all failure scenarios
+</ParamField>
+
+<ParamField path="messages" type="array" default="[]">
+  Per-scenario messages: `onMin`, `onMax`, `onBetween`, `onExact`, `onNotArray`
+</ParamField>
+
+### Basic Usage
+
+```php
+use Ronu\RestGenericClass\Core\Rules\ArrayCount;
+
+'tags' => [
+    'required',
+    'array',
+    new ArrayCount(min: 1, max: 10),
+],
+```
+
+### Custom Global Message
+
+```php
+'addresses' => [
+    'required',
+    'array',
+    new ArrayCount(
+        max: 1,
+        message: 'Only one address is allowed.'
+    ),
+],
+```
+
+### Per-Scenario Messages
+
+```php
+'attendees' => [
+    'required',
+    'array',
+    new ArrayCount(
+        min: 2,
+        max: 50,
+        messages: [
+            'onMin' => 'Please add at least :min attendees.',
+            'onMax' => 'You can add at most :max attendees.',
+            'onBetween' => 'Number of attendees must be between :min and :max.',
+        ]
+    ),
+],
+```
+
+### Token Replacement
+
+Available tokens:
+- `:attribute` - Field name (e.g., "addresses")
+- `:min` - Minimum value
+- `:max` - Maximum value
+- `:count` - Actual count provided
+
+```php
+'items' => [
+    'required',
+    'array',
+    new ArrayCount(
+        min: 1,
+        max: 100,
+        messages: [
+            'onMax' => 'You provided :count items, but the maximum is :max.',
+        ]
+    ),
+],
+```
+
+### Exact Count
+
+```php
+'options' => [
+    'required',
+    'array',
+    new ArrayCount(
+        min: 3,
+        max: 3,  // Exactly 3 items
+        messages: [
+            'onExact' => 'Exactly :min options are required.',
+        ]
+    ),
+],
+```
+
+### Only Minimum
+
+```php
+'categories' => [
+    'required',
+    'array',
+    new ArrayCount(min: 1),
+],
+```
+
+### Only Maximum
+
+```php
+'attachments' => [
+    'required',
+    'array',
+    new ArrayCount(max: 5),
+],
+```
+
+## Complete Example
+
+```php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Ronu\RestGenericClass\Core\Rules\UniqueInPivotArray;
+use Ronu\RestGenericClass\Core\Rules\UniqueCompositeInArray;
+use Ronu\RestGenericClass\Core\Rules\ArrayCount;
+use Ronu\RestGenericClass\Core\Rules\IdsExistNotDelete;
+
+class BulkUpdateUserAddressesRequest extends FormRequest
+{
+    protected string $connection;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->connection = config('database.default');
+    }
+
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            // Array size validation
+            'addresses' => [
+                'required',
+                'array',
+                new ArrayCount(
+                    min: 1,
+                    max: 10,
+                    messages: [
+                        'onMin' => 'At least one address is required.',
+                        'onMax' => 'You can update a maximum of 10 addresses at once.',
+                    ]
+                ),
+            ],
+
+            // Address IDs must exist and not be deleted
+            'addresses.*.id' => [
+                'required',
+                'integer',
+                new IdsExistNotDelete(
+                    connection: $this->connection,
+                    table: 'addresses',
+                    column: 'id'
+                ),
+            ],
+
+            // Phone must be unique within user's addresses (via pivot)
+            'addresses.*.phone' => [
+                'nullable',
+                'string',
+                'max:64',
+                new UniqueInPivotArray(
+                    connection: $this->connection,
+                    mainTable: 'addresses',
+                    pivotTable: 'user_addresses',
+                    pivotForeignKey: 'address_id',
+                    pivotOwnerKey: 'user_id',
+                    ownerValue: auth()->id(),
+                    column: 'phone',
+                    arrayKey: 'addresses',
+                    ignoreField: 'id'
+                ),
+            ],
+
+            // Label must be unique for this user (direct table check)
+            'addresses.*.label' => [
+                'required',
+                'string',
+                'max:50',
+                new UniqueCompositeInArray(
+                    connection: $this->connection,
+                    table: 'addresses',
+                    column: 'label',
+                    arrayKey: 'addresses',
+                    conditions: [
+                        'user_id' => auth()->id(),
+                    ],
+                    ignoreField: 'id'
+                ),
+            ],
+        ];
+    }
+}
+```
+
+## See Also
+
+- [ID Existence Rules](/api/validation/ids-exist-rules) - Database ID validation
+- [Validation Overview](/api/validation/overview) - All validation rules

@@ -1,0 +1,521 @@
+---
+title: Relation Loading
+description: Learn how to eager-load relationships, filter related data, and work with nested relations in your REST API
+---
+
+## Overview
+
+Rest Generic Class provides powerful relation loading capabilities that allow clients to:
+
+- Eager-load relationships with the `relations` parameter
+- Select specific fields from relations
+- Filter and sort related data
+- Nest relations multiple levels deep
+- Load pivot data for many-to-many relationships
+
+## Basic Relation Loading
+
+### Declaring Relations
+
+First, declare allowed relations in your model:
+
+```php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    const RELATIONS = ['category', 'reviews', 'tags', 'reviews.user'];
+    
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+    
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+    
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
+    }
+}
+```
+
+<Warning>
+Only relations listed in `const RELATIONS` can be loaded. This is a security feature to prevent unauthorized data access.
+</Warning>
+
+### Loading Relations
+
+Load relations via the `relations` query parameter:
+
+```http
+GET /api/products?relations=["category","reviews"]
+```
+
+Response includes nested data:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Laptop",
+      "price": 999.99,
+      "category": {
+        "id": 5,
+        "name": "Electronics"
+      },
+      "reviews": [
+        {
+          "id": 10,
+          "rating": 5,
+          "comment": "Great product!"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Field Selection
+
+### Select Specific Fields
+
+Limit fields from relations:
+
+```http
+GET /api/products?relations=["category:id,name","reviews:rating,comment"]
+```
+
+This loads only `id` and `name` from category, and `rating` and `comment` from reviews.
+
+<Note>
+The primary key is always included automatically, even if not specified.
+</Note>
+
+### Combine with Main Model Selection
+
+```http
+GET /api/products?select=id,name,price&relations=["category:name"]
+```
+
+Returns:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Laptop",
+      "price": 999.99,
+      "category": {
+        "id": 5,
+        "name": "Electronics"
+      }
+    }
+  ]
+}
+```
+
+## Nested Relations
+
+### Loading Multi-Level Relations
+
+Load relations of relations using dot notation:
+
+```http
+GET /api/products?relations=["reviews.user","category.parent"]
+```
+
+<Warning>
+All nested relations must be declared in the `RELATIONS` constant:
+
+```php
+const RELATIONS = ['reviews', 'reviews.user', 'category', 'category.parent'];
+```
+</Warning>
+
+### Deep Nesting Example
+
+```php
+class Order extends BaseModel
+{
+    const RELATIONS = [
+        'customer',
+        'items',
+        'items.product',
+        'items.product.category',
+        'items.product.reviews',
+        'items.product.reviews.user'
+    ];
+}
+```
+
+Request:
+```http
+GET /api/orders?relations=["items.product.category","items.product.reviews.user"]
+```
+
+## Filtering Related Data
+
+### Filter on Relation Fields
+
+Use the `_nested` parameter to apply `oper` filters to relations:
+
+```http
+GET /api/products?relations=["reviews"]&_nested=true&oper={"and":["reviews.rating|>=|4"]}
+```
+
+This filters products where reviews have a rating >= 4.
+
+### WhereHas Conditions
+
+Filter parent records based on related data:
+
+```http
+GET /api/products?oper={"and":["category.name|=|Electronics"]}
+```
+
+Returns only products where the category name is "Electronics".
+
+### Complex Nested Filters
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "reviews.rating|>=|4",
+      "reviews.verified|=|true"
+    ]
+  },
+  "relations": ["reviews", "category"],
+  "_nested": true
+}
+```
+
+## Relation Types
+
+### One-to-Many (HasMany)
+
+```php
+public function posts()
+{
+    return $this->hasMany(Post::class);
+}
+```
+
+Usage:
+```http
+GET /api/users/1?relations=["posts"]
+```
+
+See [ManagesOneToMany Trait](/api/traits/manages-one-to-many) for CRUD operations on one-to-many relations.
+
+### Many-to-One (BelongsTo)
+
+```php
+public function author()
+{
+    return $this->belongsTo(User::class, 'user_id');
+}
+```
+
+Usage:
+```http
+GET /api/posts?relations=["author"]
+```
+
+### Many-to-Many (BelongsToMany)
+
+```php
+public function tags()
+{
+    return $this->belongsToMany(Tag::class)
+        ->withPivot('order', 'featured')
+        ->withTimestamps();
+}
+```
+
+Usage:
+```http
+GET /api/posts?relations=["tags"]
+```
+
+Pivot data is automatically included:
+```json
+{
+  "id": 1,
+  "title": "Post Title",
+  "tags": [
+    {
+      "id": 5,
+      "name": "Laravel",
+      "pivot": {
+        "post_id": 1,
+        "tag_id": 5,
+        "order": 1,
+        "featured": true
+      }
+    }
+  ]
+}
+```
+
+See [ManagesManyToMany Trait](/api/traits/manages-many-to-many) for advanced many-to-many operations.
+
+### Has-One-Through and Has-Many-Through
+
+```php
+public function country()
+{
+    return $this->hasOneThrough(
+        Country::class,
+        Address::class,
+        'user_id',     // Foreign key on addresses
+        'id',          // Foreign key on countries
+        'id',          // Local key on users
+        'country_id'   // Local key on addresses
+    );
+}
+```
+
+Usage:
+```http
+GET /api/users?relations=["country"]
+```
+
+### Polymorphic Relations
+
+```php
+public function comments()
+{
+    return $this->morphMany(Comment::class, 'commentable');
+}
+```
+
+Usage:
+```http
+GET /api/posts?relations=["comments"]
+GET /api/videos?relations=["comments"]
+```
+
+## Advanced Scenarios
+
+### Conditional Relations
+
+Load different relations based on user role:
+
+```php
+public function listAll(Request $request): array
+{
+    $params = $this->processParams($request);
+    
+    // Admin sees everything
+    if (auth()->user()->isAdmin()) {
+        $params['relations'][] = 'internalNotes';
+    }
+    
+    return $this->service->list_all($params);
+}
+```
+
+### Counting Relations
+
+Use `withCount()` for relation counts:
+
+```php
+const RELATIONS = ['posts', 'posts_count'];
+
+public function posts()
+{
+    return $this->hasMany(Post::class);
+}
+```
+
+Request:
+```http
+GET /api/users?relations=["posts_count"]
+```
+
+Response:
+```json
+{
+  "id": 1,
+  "name": "John Doe",
+  "posts_count": 42
+}
+```
+
+### Aggregate Functions
+
+Load computed values:
+
+```php
+const RELATIONS = ['orders', 'orders_sum_total'];
+
+public function orders()
+{
+    return $this->hasMany(Order::class);
+}
+```
+
+## Relation Management Traits
+
+Rest Generic Class provides traits for managing related records:
+
+### ManagesOneToMany
+
+Provides CRUD endpoints for HasMany relationships:
+
+```php
+use Ronu\RestGenericClass\Core\Traits\ManagesOneToMany;
+
+class CountryController extends RestController
+{
+    use ManagesOneToMany;
+    
+    protected array $oneToManyConfig = [
+        'states' => [
+            'relationship'  => 'array_states',
+            'relatedModel'  => State::class,
+            'parentModel'   => Country::class,
+            'foreignKey'    => 'country_id',
+            'localKey'      => 'id',
+        ],
+    ];
+}
+```
+
+See [ManagesOneToMany Trait](/api/traits/manages-one-to-many) for details.
+
+### ManagesManyToMany
+
+Provides CRUD endpoints for BelongsToMany relationships:
+
+```php
+use Ronu\RestGenericClass\Core\Traits\ManagesManyToMany;
+
+class UserController extends RestController
+{
+    use ManagesManyToMany;
+    
+    protected array $manyToManyConfig = [
+        'roles' => [
+            'relationship'  => 'array_roles',
+            'relatedModel'  => Role::class,
+            'pivotModel'    => UserRole::class,
+            'parentModel'   => User::class,
+            'parentKey'     => 'user_id',
+            'relatedKey'    => 'role_id',
+        ],
+    ];
+}
+```
+
+See [ManagesManyToMany Trait](/api/traits/manages-many-to-many) for details.
+
+## Configuration
+
+Configure relation behavior in `config/rest-generic-class.php`:
+
+```php
+'filtering' => [
+    // Enforce relation allowlist (recommended: true)
+    'strict_relations' => true,
+    
+    // Maximum nesting depth for relations
+    'max_depth' => 5,
+],
+```
+
+## Performance Optimization
+
+### Eager Loading vs Lazy Loading
+
+**Good** - Eager load to avoid N+1 queries:
+```http
+GET /api/products?relations=["category","reviews"]
+```
+
+**Bad** - Without eager loading, each product triggers separate queries:
+```http
+GET /api/products  
+# Then accessing $product->category in Blade/Vue causes N+1
+```
+
+### Select Only Needed Fields
+
+```http
+GET /api/products?select=id,name&relations=["category:id,name"]
+```
+
+This reduces data transfer and JSON serialization overhead.
+
+### Limit Relation Depth
+
+Avoid deeply nested relations in production:
+
+```php
+// Avoid this in high-traffic endpoints
+relations=["order.items.product.category.parent.region"]
+
+// Better: load in separate requests or denormalize data
+relations=["order.items.product"]
+```
+
+## Error Handling
+
+Common relation errors:
+
+```php
+// Relation not in RELATIONS constant
+relations=["secret_field"]  
+// Throws: 500 error if strict_relations is enabled
+
+// Invalid relation name
+relations=["nonexistent"]  
+// Laravel error: Relationship not found
+
+// Invalid field syntax
+relations=["category::id,name"]  
+// Should use single colon: "category:id,name"
+```
+
+## Security Best Practices
+
+<Warning>
+1. **Always declare relations**: Never allow arbitrary relation loading
+2. **Use field selection**: Prevent exposure of sensitive fields
+3. **Validate nested filters**: Ensure `_nested` doesn't expose restricted data
+4. **Limit depth**: Set reasonable `max_depth` in config
+5. **Check permissions**: Use middleware to restrict sensitive relations
+</Warning>
+
+Example permission check:
+
+```php
+public function listAll(Request $request): array
+{
+    $params = $this->processParams($request);
+    
+    // Remove sensitive relations for non-admin users
+    if (!auth()->user()->isAdmin()) {
+        $params['relations'] = array_diff(
+            $params['relations'], 
+            ['internalNotes', 'privateData']
+        );
+    }
+    
+    return $this->service->list_all($params);
+}
+```
+
+## Related Documentation
+
+- [Dynamic Filtering](/core/filtering) - Filter related data
+- [ManagesOneToMany Trait](/api/traits/manages-one-to-many) - One-to-many CRUD
+- [ManagesManyToMany Trait](/api/traits/manages-many-to-many) - Many-to-many CRUD
+- [Relation Loading Guide](/guides/relation-loading) - Detailed examples

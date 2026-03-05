@@ -1,122 +1,150 @@
 {
   "$schema": "https://mintlify.com/docs.json",
+  "name": "Rest Generic Class",
   "theme": "mint",
-  "name": "Mint Starter Kit",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#94cb04",
+    "light": "#545454",
+    "dark": "#94cb04"
   },
   "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/charlietyn/rest-generic-class"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/charlietyn/rest-generic-class"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "concepts",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Installation",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "installation/requirements",
+              "installation/setup",
+              "installation/configuration"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "core/models",
+              "core/services",
+              "core/controllers",
+              "core/filtering",
+              "core/relations",
+              "core/hierarchy"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/basic-usage",
+              "guides/advanced-filtering",
+              "guides/relation-loading",
+              "guides/hierarchical-data",
+              "guides/caching",
+              "guides/many-to-many",
+              "guides/bulk-operations",
+              "guides/permissions"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/environment-variables",
+              "configuration/cache-strategy",
+              "configuration/validation"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core Classes",
             "pages": [
-              "api-reference/introduction"
+              "api/base-model",
+              "api/base-service",
+              "api/rest-controller"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Traits",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/traits/has-dynamic-filter",
+              "api/traits/manages-many-to-many",
+              "api/traits/manages-one-to-many",
+              "api/traits/has-permissions"
+            ]
+          },
+          {
+            "group": "Middleware",
+            "pages": [
+              "api/middleware/filter-request-by-role",
+              "api/middleware/inject-request-params",
+              "api/middleware/spatie-authorize",
+              "api/middleware/transform-data"
+            ]
+          },
+          {
+            "group": "Validation Rules",
+            "pages": [
+              "api/validation/overview",
+              "api/validation/ids-exist-rules",
+              "api/validation/unique-rules"
+            ]
+          },
+          {
+            "group": "Helpers",
+            "pages": [
+              "api/helpers/database-error-parser",
+              "api/helpers/request-body",
+              "api/helpers/objectify"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/simple-crud",
+              "examples/filtering-scenarios",
+              "examples/cache-scenarios",
+              "examples/edge-cases"
+            ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "help/troubleshooting",
+              "help/faq",
+              "help/security",
+              "help/migration-guide"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

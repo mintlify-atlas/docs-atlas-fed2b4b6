@@ -1,0 +1,470 @@
+---
+title: Migration Guide
+description: Upgrading and migrating Rest Generic Class versions
+---
+
+This guide helps you upgrade Rest Generic Class to newer versions and migrate from older implementations.
+
+## Current Version
+
+Rest Generic Class is currently at **version 2.1.8**.
+
+## Requirements
+
+### System Requirements
+
+- **PHP**: ^8.0 or higher
+- **Laravel**: ^12.0 or higher
+
+Before upgrading, ensure your application meets these minimum requirements:
+
+```bash
+php -v  # Should show PHP 8.0 or higher
+php artisan --version  # Should show Laravel 12.x
+```
+
+## Upgrading the Package
+
+### Step 1: Update Composer
+
+Update the package version in your `composer.json`:
+
+```bash
+composer update ronu/rest-generic-class
+```
+
+Or require a specific version:
+
+```bash
+composer require ronu/rest-generic-class:^2.1
+```
+
+### Step 2: Publish Updated Configuration
+
+If the configuration structure has changed, republish the config file:
+
+```bash
+php artisan vendor:publish --tag=rest-generic-class-config --force
+```
+
+<Warning>
+  Using `--force` will overwrite your existing configuration file. Back up your current `config/rest-generic-class.php` before running this command if you have custom settings.
+</Warning>
+
+### Step 3: Clear Caches
+
+Clear all relevant caches:
+
+```bash
+php artisan config:clear
+php artisan cache:clear
+php artisan route:clear
+php artisan view:clear
+```
+
+If using Spatie permissions:
+
+```bash
+php artisan permission:cache-reset
+```
+
+### Step 4: Test Your Application
+
+Run your test suite to ensure compatibility:
+
+```bash
+php artisan test
+```
+
+Manually test critical API endpoints, especially:
+- Filtering with `oper` parameters
+- Relation loading
+- Hierarchy queries (if used)
+- Export functionality (if used)
+- Permission checks (if using Spatie)
+
+## Migration Strategies
+
+### From Custom Implementation
+
+If you're migrating from a custom REST API implementation to Rest Generic Class:
+
+#### 1. Model Migration
+
+Update your models to extend `BaseModel`:
+
+```php
+// Before
+use Illuminate\Database\Eloquent\Model;
+
+class Product extends Model
+{
+    protected $fillable = ['name', 'price', 'stock'];
+}
+
+// After
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $fillable = ['name', 'price', 'stock'];
+    
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews'];
+}
+```
+
+#### 2. Service Layer
+
+Create service classes extending `BaseService`:
+
+```php
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+    
+    // Migrate custom methods
+    public function getActiveProducts()
+    {
+        return $this->model->where('status', 'active')->get();
+    }
+}
+```
+
+#### 3. Controller Migration
+
+Refactor controllers to extend `RestController`:
+
+```php
+// Before
+class ProductController extends Controller
+{
+    public function index(Request $request)
+    {
+        $products = Product::with('category')->paginate(15);
+        return response()->json($products);
+    }
+}
+
+// After
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    protected $modelClass = Product::class;
+
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+    
+    // index(), show(), store(), update(), destroy() 
+    // are now inherited and handle filtering automatically
+}
+```
+
+#### 4. API Compatibility
+
+Update API clients to use the new query format:
+
+```http
+# Before (custom implementation)
+GET /api/products?status=active&category_id=5
+
+# After (Rest Generic Class)
+POST /api/products
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "category_id|=|5"
+    ]
+  },
+  "relations": ["category"]
+}
+```
+
+Or using GET with JSON-encoded parameters:
+
+```http
+GET /api/products?oper={"and":["status|=|active"]}&relations=["category"]
+```
+
+### From MongoDB to SQL (or vice versa)
+
+#### MongoDB to SQL
+
+```php
+// Before (MongoDB)
+use Ronu\RestGenericClass\Core\Models\BaseModelMongo;
+
+class Product extends BaseModelMongo
+{
+    protected $connection = 'mongodb';
+}
+
+// After (SQL)
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $connection = 'mysql';  // or 'pgsql', etc.
+}
+```
+
+#### SQL to MongoDB
+
+```php
+// Before (SQL)
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    // ...
+}
+
+// After (MongoDB)
+use Ronu\RestGenericClass\Core\Models\BaseModelMongo;
+
+class Product extends BaseModelMongo
+{
+    protected $connection = 'mongodb';
+}
+```
+
+<Note>
+  Ensure you have `mongodb/laravel` installed when using `BaseModelMongo`:
+  
+  ```bash
+  composer require mongodb/laravel
+  ```
+</Note>
+
+## Configuration Migration
+
+### Environment Variables
+
+If upgrading from an older version, ensure your `.env` file includes new variables:
+
+```env
+# Logging
+LOG_LEVEL=debug
+LOG_QUERY=false
+
+# Column Validation
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Cache
+REST_CACHE_ENABLED=false
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=60
+REST_CACHE_TTL_LIST=60
+REST_CACHE_TTL_ONE=120
+
+# Validation Cache
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=3600
+REST_VALIDATION_CACHE_PREFIX=validation
+REST_VALIDATION_CONNECTION=db
+```
+
+### Config File Updates
+
+Compare your existing `config/rest-generic-class.php` with the published version:
+
+```bash
+# Backup current config
+cp config/rest-generic-class.php config/rest-generic-class.php.backup
+
+# View differences
+php artisan vendor:publish --tag=rest-generic-class-config --force
+diff config/rest-generic-class.php.backup config/rest-generic-class.php
+```
+
+Manually merge any custom settings from your backup.
+
+## Optional Dependencies
+
+Rest Generic Class suggests several optional packages. Install based on your needs:
+
+### Excel Export
+
+```bash
+composer require maatwebsite/excel
+```
+
+Required for: `exportExcel()` method
+
+### PDF Export
+
+```bash
+composer require barryvdh/laravel-dompdf
+```
+
+Required for: `exportPdf()` method
+
+### Permissions
+
+```bash
+composer require spatie/laravel-permission
+```
+
+Required for: Permission models, traits, and middleware
+
+### Module Support
+
+```bash
+composer require nwidart/laravel-modules
+```
+
+Required for: Module-aware permissions
+
+## Compatibility Notes
+
+### Laravel 12.x
+
+Rest Generic Class 2.1.8 requires Laravel 12.0 or higher. If you're on an older Laravel version:
+
+1. Upgrade Laravel first: https://laravel.com/docs/12.x/upgrade
+2. Then upgrade Rest Generic Class
+
+### PHP 8.0+
+
+The package requires PHP 8.0 or higher. Ensure your server meets this requirement:
+
+```bash
+php -v
+```
+
+If you're on PHP 7.x, upgrade PHP before updating the package.
+
+### Breaking Changes
+
+While the package maintains backward compatibility where possible, be aware of:
+
+1. **Configuration structure changes** - Always review config after updates
+2. **New required constants** - Some model constants may become required
+3. **Deprecated methods** - Check for deprecation notices in logs
+
+## Rollback Procedure
+
+If you encounter issues after upgrading:
+
+### 1. Restore Previous Version
+
+```bash
+composer require ronu/rest-generic-class:2.1.7  # Replace with your previous version
+```
+
+### 2. Restore Configuration
+
+```bash
+cp config/rest-generic-class.php.backup config/rest-generic-class.php
+```
+
+### 3. Clear Caches
+
+```bash
+php artisan config:clear
+php artisan cache:clear
+```
+
+### 4. Report Issue
+
+Open an issue on GitHub with:
+- Your Laravel version
+- Previous package version
+- New package version
+- Error messages
+- Steps to reproduce
+
+## Testing After Migration
+
+Create a comprehensive test checklist:
+
+- [ ] Basic CRUD operations work
+- [ ] Filtering with `oper` functions correctly
+- [ ] Relations load properly
+- [ ] Pagination works
+- [ ] Hierarchy queries work (if used)
+- [ ] Export functions work (if used)
+- [ ] Permission checks pass (if using Spatie)
+- [ ] Caching behaves as expected (if enabled)
+- [ ] Multi-tenant isolation works (if applicable)
+- [ ] Custom service methods still function
+- [ ] Custom controller methods still function
+
+## Getting Help
+
+If you encounter migration issues:
+
+1. Check the [Troubleshooting guide](/help/troubleshooting)
+2. Review the [FAQ](/help/faq)
+3. Consult the [API Reference](/api/base-model)
+4. Open an issue on [GitHub](https://github.com/charlietyn/rest-generic-class)
+5. Include:
+   - Laravel version
+   - Package version (before and after)
+   - PHP version
+   - Error messages with full stack traces
+   - Steps to reproduce the issue
+
+## Best Practices
+
+### Version Pinning
+
+In production, pin to specific versions:
+
+```json
+{
+  "require": {
+    "ronu/rest-generic-class": "2.1.8"
+  }
+}
+```
+
+Avoid using `^` or `*` in production to prevent unexpected updates.
+
+### Staging Environment
+
+Always test upgrades in a staging environment before production:
+
+1. Deploy to staging
+2. Run full test suite
+3. Manually test critical endpoints
+4. Monitor for errors
+5. Only then deploy to production
+
+### Incremental Updates
+
+If you're several versions behind, update incrementally:
+
+```bash
+# Don't jump from 2.0.x to 2.1.8 directly
+# Update step by step
+composer require ronu/rest-generic-class:2.1.0
+# Test
+composer require ronu/rest-generic-class:2.1.5
+# Test
+composer require ronu/rest-generic-class:2.1.8
+# Test
+```
+
+This makes it easier to identify which version introduced an issue.
+
+## Next Steps
+
+After successful migration:
+
+- Review the [Configuration overview](/configuration/overview) for all options
+- Check out [Advanced filtering](/guides/advanced-filtering) for powerful query features
+- Optimize your implementation with the [Caching guide](/guides/caching)
+- Ensure security with the [Security guide](/help/security)

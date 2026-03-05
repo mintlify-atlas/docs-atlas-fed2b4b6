@@ -1,0 +1,651 @@
+---
+title: "Hierarchical Data"
+description: "Work with tree structures, parent-child relationships, and self-referencing models"
+---
+
+Rest Generic Class provides native support for hierarchical data structures like categories, organizational charts, menu trees, and comment threads. This guide shows you how to model, query, and display tree structures efficiently.
+
+## Enabling Hierarchy Support
+
+To enable hierarchy features, define the `HIERARCHY_FIELD_ID` constant in your model:
+
+```php Category.php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Category extends BaseModel
+{
+    protected $fillable = ['name', 'description', 'parent_id', 'sort_order'];
+
+    const MODEL = 'category';
+    const RELATIONS = ['parent', 'children'];
+    
+    // Enable hierarchy support
+    const HIERARCHY_FIELD_ID = 'parent_id';
+
+    public function parent()
+    {
+        return $this->belongsTo(Category::class, 'parent_id');
+    }
+
+    public function children()
+    {
+        return $this->hasMany(Category::class, 'parent_id');
+    }
+}
+```
+
+<Note>
+  `HIERARCHY_FIELD_ID` must be the name of the self-referencing foreign key column (typically `parent_id`, `manager_id`, or `role_id`).
+</Note>
+
+## Hierarchy Helper Methods
+
+Once `HIERARCHY_FIELD_ID` is defined, your model gains several helper methods:
+
+```php
+$category = Category::find(5);
+
+// Check if hierarchy is supported
+$category->hasHierarchyField(); // true
+
+// Get the hierarchy field name
+$category->getHierarchyFieldId(); // 'parent_id'
+
+// Check if this is a root node (parent_id is null)
+$category->isHierarchyRoot(); // false
+
+// Get the parent
+$parent = $category->hierarchyParent; // Category instance or null
+
+// Get all children
+$children = $category->hierarchyChildren; // Collection
+
+// Get all ancestors (up to root)
+$ancestors = $category->getHierarchyAncestors(); // Collection
+
+// Get all descendants (with optional max depth)
+$descendants = $category->getHierarchyDescendants(maxDepth: 3); // Collection
+```
+
+## List Endpoint Hierarchy Modes
+
+The `hierarchy` parameter transforms flat lists into tree structures.
+
+### Mode: `roots_only`
+
+Returns only root nodes (nodes with `parent_id = null`):
+
+```http
+GET /api/v1/categories
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "roots_only"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Electronics",
+      "parent_id": null
+    },
+    {
+      "id": 2,
+      "name": "Clothing",
+      "parent_id": null
+    }
+  ]
+}
+```
+
+### Mode: `flat_all`
+
+Returns all nodes in a flat list (default SQL behavior):
+
+```http
+GET /api/v1/categories
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "flat_all"
+  }
+}
+```
+
+### Mode: `with_descendants`
+
+Returns root nodes with nested children:
+
+```http
+GET /api/v1/categories
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "children",
+    "max_depth": 3
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Electronics",
+      "parent_id": null,
+      "children": [
+        {
+          "id": 3,
+          "name": "Computers",
+          "parent_id": 1,
+          "children": [
+            {
+              "id": 5,
+              "name": "Laptops",
+              "parent_id": 3,
+              "children": []
+            },
+            {
+              "id": 6,
+              "name": "Desktops",
+              "parent_id": 3,
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "name": "Phones",
+          "parent_id": 1,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Mode: `with_ancestors`
+
+Returns nodes with their ancestor chain:
+
+```http
+GET /api/v1/categories
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_ancestors"
+  },
+  "oper": {
+    "and": ["id|=|5"]
+  }
+}
+```
+
+Response shows the full path from root to the selected node:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Electronics",
+      "parent_id": null,
+      "children": [
+        {
+          "id": 3,
+          "name": "Computers",
+          "parent_id": 1,
+          "children": [
+            {
+              "id": 5,
+              "name": "Laptops",
+              "parent_id": 3,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Show Endpoint Hierarchy Modes
+
+The `show` endpoint supports hierarchy modes when fetching a single record.
+
+### Mode: `node_only`
+
+Returns just the node with an empty children array:
+
+```http
+GET /api/v1/categories/3
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "mode": "node_only"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": 3,
+  "name": "Computers",
+  "parent_id": 1,
+  "children": []
+}
+```
+
+### Mode: `with_descendants` (Default)
+
+Returns the node with all its descendants:
+
+```http
+GET /api/v1/categories/3
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "mode": "with_descendants",
+    "max_depth": 2
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": 3,
+  "name": "Computers",
+  "parent_id": 1,
+  "children": [
+    {
+      "id": 5,
+      "name": "Laptops",
+      "parent_id": 3,
+      "children": []
+    },
+    {
+      "id": 6,
+      "name": "Desktops",
+      "parent_id": 3,
+      "children": []
+    }
+  ]
+}
+```
+
+### Mode: `with_ancestors`
+
+Returns the ancestor chain from root to this node:
+
+```http
+GET /api/v1/categories/5
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "mode": "with_ancestors"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "id": 1,
+  "name": "Electronics",
+  "parent_id": null,
+  "children": [
+    {
+      "id": 3,
+      "name": "Computers",
+      "parent_id": 1,
+      "children": [
+        {
+          "id": 5,
+          "name": "Laptops",
+          "parent_id": 3,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Mode: `full_branch`
+
+Returns ancestors + node + descendants (the complete branch):
+
+```http
+GET /api/v1/categories/3
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "mode": "full_branch"
+  }
+}
+```
+
+## Hierarchy Configuration Options
+
+```json
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",  // List mode: roots_only, flat_all, with_descendants, with_ancestors
+    "mode": "with_descendants",         // Show mode: node_only, with_descendants, with_ancestors, full_branch
+    "children_key": "children",         // Name of the children array property
+    "max_depth": 3,                     // Maximum nesting depth (null = unlimited)
+    "include_empty_children": true      // Include empty children arrays for leaf nodes
+  }
+}
+```
+
+<Warning>
+  Without `max_depth`, deep trees can cause timeouts. Always set `max_depth` for large hierarchies or use pagination.
+</Warning>
+
+## Combining Hierarchy with Filters
+
+Filter the tree before building the hierarchy:
+
+```http
+GET /api/v1/categories
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "max_depth": 2
+  },
+  "oper": {
+    "and": ["active|=|true"]
+  }
+}
+```
+
+This:
+1. Filters categories where `active = true`
+2. Builds a tree with only active categories
+3. Limits depth to 2 levels
+
+## Pagination with Hierarchy
+
+Paginate root nodes, not the entire tree:
+
+```http
+GET /api/v1/categories
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "max_depth": 2
+  },
+  "pagination": {
+    "page": 1,
+    "pageSize": 10
+  }
+}
+```
+
+This returns 10 root categories, each with up to 2 levels of descendants.
+
+<Note>
+  Pagination applies to **root nodes only**. Descendants are loaded in full (up to `max_depth`).
+</Note>
+
+## Real-World Examples
+
+### E-commerce Category Tree
+
+Build a navigation menu:
+
+```http
+GET /api/v1/categories?select=["id","name","slug","icon"]
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "subcategories",
+    "max_depth": 2
+  },
+  "oper": {
+    "and": ["visible_in_menu|=|true"]
+  },
+  "orderby": [{"sort_order": "asc"}]
+}
+```
+
+### Organizational Chart
+
+Show company structure:
+
+```http
+GET /api/v1/employees?select=["id","name","title","avatar_url","manager_id"]&relations=["department:id,name"]
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "reports",
+    "max_depth": 4
+  },
+  "oper": {
+    "and": ["active|=|true"]
+  }
+}
+```
+
+### Nested Comment Thread
+
+Display threaded comments:
+
+```http
+GET /api/v1/comments?select=["id","body","user_id","parent_id","created_at"]&relations=["user:id,name,avatar_url"]
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "replies",
+    "max_depth": 3
+  },
+  "oper": {
+    "and": ["post_id|=|123", "approved|=|true"]
+  },
+  "orderby": [{"created_at": "desc"}]
+}
+```
+
+### Breadcrumb Trail
+
+Get the path from root to a specific node:
+
+```http
+GET /api/v1/categories/15
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "mode": "with_ancestors"
+  }
+}
+```
+
+Response provides the complete breadcrumb chain:
+
+```json
+[
+  {"id": 1, "name": "Electronics"},
+  {"id": 3, "name": "Computers"},
+  {"id": 5, "name": "Laptops"},
+  {"id": 15, "name": "Gaming Laptops"}
+]
+```
+
+## Performance Optimization
+
+### Problem: N+1 Queries
+
+Without optimization, loading a tree recursively triggers one query per node.
+
+### Solution: Optimized Loading
+
+The package uses optimized queries:
+
+```php
+// Bad: N+1 queries
+$categories = Category::where('parent_id', null)->get();
+foreach ($categories as $cat) {
+    $cat->load('children'); // 1 query per category
+}
+
+// Good: 2 queries total
+$categories = Category::where('parent_id', null)
+    ->with('children')
+    ->get();
+```
+
+The hierarchy mode uses **breadth-first loading** to minimize queries:
+
+1. Load all root nodes (1 query)
+2. Load all level-1 children (1 query)
+3. Load all level-2 children (1 query)
+4. Continue until `max_depth`
+
+Total queries = `max_depth + 1`
+
+<Note>
+  For a tree with 1000 nodes and `max_depth=3`, this is **4 queries** instead of 1000.
+</Note>
+
+### Indexing
+
+Always index the hierarchy field:
+
+```php
+Schema::create('categories', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->unsignedBigInteger('parent_id')->nullable();
+    $table->timestamps();
+
+    // Index for hierarchy queries
+    $table->index('parent_id');
+});
+```
+
+## Troubleshooting
+
+### Hierarchy Not Working
+
+**Symptom:** 400 error "Model does not support hierarchical listing"
+
+**Cause:** `HIERARCHY_FIELD_ID` is not defined
+
+**Solution:**
+```php
+const HIERARCHY_FIELD_ID = 'parent_id';
+```
+
+### Timeout on Large Trees
+
+**Symptom:** Request times out with large hierarchies
+
+**Causes:**
+- No `max_depth` set
+- Very deep tree (100+ levels)
+- Missing index on hierarchy field
+
+**Solutions:**
+- Set `max_depth`: `"max_depth": 3`
+- Use pagination on roots
+- Add database index on `parent_id`
+- Filter the dataset: `"oper": {"and": ["active|=|true"]}`
+
+### Circular References
+
+**Symptom:** Infinite loop or stack overflow
+
+**Cause:** Data has circular references (A → B → A)
+
+**Solution:** Add database constraint to prevent circular references:
+
+```php
+DB::statement('
+    ALTER TABLE categories 
+    ADD CONSTRAINT no_self_reference 
+    CHECK (id != parent_id)
+');
+```
+
+### Empty Children Arrays
+
+**Symptom:** Leaf nodes don't have `children` property
+
+**Cause:** `include_empty_children` is `false`
+
+**Solution:**
+```json
+{
+  "hierarchy": {
+    "include_empty_children": true
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Filtering" icon="filter" href="/guides/advanced-filtering">
+    Combine hierarchy with complex filters
+  </Card>
+  <Card title="Relation Loading" icon="link" href="/guides/relation-loading">
+    Eager-load relations in hierarchical queries
+  </Card>
+  <Card title="Caching" icon="bolt" href="/guides/caching">
+    Cache tree structures for faster responses
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/hierarchy">
+    Complete hierarchy API reference
+  </Card>
+</CardGroup>
+
+## Evidence
+
+- **File:** `src/Core/Services/BaseService.php`  
+  **Lines:** 679-754, 828-925, 936-1031  
+  Implements `showHierarchy()`, `buildShowHierarchy()`, `loadDescendantsOptimized()`, and `loadAncestorsOptimized()`
+
+- **File:** `src/Core/Models/BaseModel.php`  
+  **Lines:** 52-55, 169-240  
+  Defines `HIERARCHY_FIELD_ID` and helper methods (`hasHierarchyField()`, `getHierarchyAncestors()`, `getHierarchyDescendants()`, etc.)
+
+- **File:** `documentacion/doc-en/03-usage/02-scenarios.md`  
+  **Lines:** 76-104  
+  Shows hierarchy configuration example

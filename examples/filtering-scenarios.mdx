@@ -1,0 +1,470 @@
+---
+title: Real-World Filtering Examples
+description: Practical filtering scenarios for e-commerce, date ranges, and complex queries
+---
+
+This page demonstrates real-world filtering scenarios using the `oper` parameter and relation filtering capabilities.
+
+## Overview
+
+The Rest Generic Class package provides powerful filtering through the `oper` parameter, supporting:
+- Simple equality and comparison operators
+- Complex AND/OR logic trees
+- Relation-based filtering
+- Date range queries
+- Full-text search patterns
+
+## E-Commerce Product Search
+
+### Scenario 1: Basic Product Catalog Filter
+
+**Goal:** Show active products in stock within a price range.
+
+<CodeGroup>
+
+```http Request
+GET /api/v1/products?select=["id","name","price","stock"]&relations=["category:id,name"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50",
+      "price|<=|200",
+      "stock|>|0"
+    ]
+  },
+  "orderby": [{"price": "asc"}],
+  "pagination": {"page": 1, "pageSize": 20}
+}
+```
+
+```json Response
+{
+  "success": true,
+  "data": {
+    "current_page": 1,
+    "data": [
+      {
+        "id": 5,
+        "name": "Wireless Mouse",
+        "price": "59.99",
+        "stock": 45,
+        "category": {"id": 3, "name": "Electronics"}
+      },
+      {
+        "id": 12,
+        "name": "USB-C Hub",
+        "price": "79.99",
+        "stock": 28,
+        "category": {"id": 3, "name": "Electronics"}
+      }
+    ],
+    "per_page": 20,
+    "total": 47
+  }
+}
+```
+
+</CodeGroup>
+
+### Scenario 2: Search by Name with Category Filter
+
+**Goal:** Search for "keyboard" products in the Electronics category.
+
+```json
+{
+  "oper": {
+    "and": [
+      "name|like|%keyboard%",
+      "status|=|active"
+    ],
+    "category": {
+      "and": [
+        "name|=|Electronics"
+      ]
+    }
+  },
+  "relations": ["category:id,name,slug"]
+}
+```
+
+<Note>
+  The `like` operator uses SQL LIKE syntax. Use `%` as a wildcard for partial matches. For case-insensitive searches, your database collation determines behavior.
+</Note>
+
+### Scenario 3: Complex OR Logic - Clearance or New Arrivals
+
+**Goal:** Show products that are either on clearance (low stock) or newly added.
+
+```json
+{
+  "oper": {
+    "or": [
+      {
+        "and": [
+          "stock|<=|10",
+          "stock|>|0",
+          "status|=|active"
+        ]
+      },
+      {
+        "and": [
+          "created_at|>=|2024-03-01",
+          "status|=|active"
+        ]
+      }
+    ]
+  },
+  "orderby": [{"created_at": "desc"}]
+}
+```
+
+### Scenario 4: Multi-Category Filter
+
+**Goal:** Show products from multiple categories using IN operator.
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "category_id|in|3,5,7,9"
+    ]
+  },
+  "relations": ["category:id,name"]
+}
+```
+
+## Date Range Queries
+
+### Scenario 5: Products Created This Month
+
+**Goal:** List all products added in the current month.
+
+```json
+{
+  "oper": {
+    "and": [
+      "created_at|>=|2024-03-01",
+      "created_at|<|2024-04-01",
+      "status|=|active"
+    ]
+  },
+  "orderby": [{"created_at": "desc"}]
+}
+```
+
+### Scenario 6: Recently Updated Products
+
+**Goal:** Find products updated in the last 7 days.
+
+<CodeGroup>
+
+```json Request Body
+{
+  "oper": {
+    "and": [
+      "updated_at|>=|2024-03-08",
+      "status|=|active"
+    ]
+  },
+  "select": ["id", "name", "price", "updated_at"],
+  "orderby": [{"updated_at": "desc"}]
+}
+```
+
+```php Dynamic Date in PHP
+// Generate dynamic date filter
+$sevenDaysAgo = now()->subDays(7)->toDateString();
+
+$filter = [
+    'oper' => [
+        'and' => [
+            "updated_at|>={$sevenDaysAgo}",
+            'status|=|active'
+        ]
+    ]
+];
+```
+
+</CodeGroup>
+
+### Scenario 7: Seasonal Product Filter
+
+**Goal:** Show products relevant to a specific season with date-based logic.
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      {
+        "or": [
+          "season|=|all-year",
+          "season|=|winter"
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Relation-Based Filtering
+
+### Scenario 8: Filter by Nested Relation
+
+**Goal:** Find products with highly-rated reviews (rating >= 4).
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "reviews": {
+      "and": ["rating|>=|4"]
+    }
+  },
+  "relations": ["reviews:id,rating,comment,created_at"],
+  "_nested": true
+}
+```
+
+<Warning>
+  Set `_nested: true` to apply relation filters to both the query and the eager-loaded relations. Without this flag, relation filters only affect the main query (existence check).
+</Warning>
+
+### Scenario 9: Filter by Category and Subcategory
+
+**Goal:** Show products from Electronics category where subcategory is "Accessories".
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "category": {
+      "and": [
+        "parent_category|=|Electronics",
+        "name|=|Accessories"
+      ]
+    }
+  },
+  "relations": ["category:id,name,parent_category"]
+}
+```
+
+### Scenario 10: Products with Tags
+
+**Goal:** Find products tagged with specific keywords (many-to-many relation).
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "tags": {
+      "and": [
+        "name|in|wireless,bluetooth,portable"
+      ]
+    }
+  },
+  "relations": ["tags:id,name"]
+}
+```
+
+## Multi-Condition Complex Filters
+
+### Scenario 11: Advanced Search with All Features
+
+**Goal:** Comprehensive search combining text, price, date, stock, and relations.
+
+```json
+{
+  "oper": {
+    "and": [
+      "name|like|%gaming%",
+      "status|=|active",
+      "price|>=|50",
+      "price|<=|500",
+      "stock|>|5",
+      "created_at|>=|2024-01-01"
+    ],
+    "category": {
+      "and": [
+        "name|in|Electronics,Gaming,Computers"
+      ]
+    },
+    "reviews": {
+      "and": [
+        "rating|>=|3.5"
+      ]
+    }
+  },
+  "relations": [
+    "category:id,name",
+    "reviews:id,rating"
+  ],
+  "select": [
+    "id",
+    "name",
+    "price",
+    "stock",
+    "created_at"
+  ],
+  "orderby": [
+    {"price": "asc"}
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 25
+  }
+}
+```
+
+### Scenario 12: Exclude Specific Items
+
+**Goal:** Show all products except specific excluded IDs and categories.
+
+```json
+{
+  "oper": {
+    "and": [
+      "id|not in|5,12,18,24",
+      "category_id|not in|99",
+      "status|=|active"
+    ]
+  }
+}
+```
+
+### Scenario 13: Null/Not Null Checks
+
+**Goal:** Find products with or without a description.
+
+<CodeGroup>
+
+```json With Description
+{
+  "oper": {
+    "and": [
+      "description|is not|null",
+      "status|=|active"
+    ]
+  }
+}
+```
+
+```json Without Description
+{
+  "oper": {
+    "and": [
+      "description|is|null",
+      "status|=|active"
+    ]
+  }
+}
+```
+
+</CodeGroup>
+
+## Performance Optimization Tips
+
+<Steps>
+
+<Step title="Use Select to Limit Columns">
+  Only fetch the columns you need:
+  
+  ```json
+  {
+    "select": ["id", "name", "price"],
+    "relations": ["category:id,name"]
+  }
+  ```
+</Step>
+
+<Step title="Add Database Indexes">
+  Index frequently filtered columns:
+  
+  ```php
+  $table->index(['status', 'price']);
+  $table->index(['created_at']);
+  $table->index(['category_id', 'status']);
+  ```
+</Step>
+
+<Step title="Enable Caching for Repeated Queries">
+  ```env
+  REST_CACHE_ENABLED=true
+  REST_CACHE_STORE=redis
+  REST_CACHE_TTL=300
+  ```
+</Step>
+
+<Step title="Limit Relation Depth">
+  Avoid loading too many nested relations:
+  
+  ```json
+  {
+    "relations": ["category:id,name"],
+    "_nested": false
+  }
+  ```
+</Step>
+
+</Steps>
+
+## Supported Operators
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| `=` | `status\|=\|active` | Exact match |
+| `!=` | `status\|!=\|inactive` | Not equal |
+| `>` | `price\|>\|100` | Greater than |
+| `>=` | `price\|>=\|100` | Greater or equal |
+| `<` | `stock\|<\|10` | Less than |
+| `<=` | `stock\|<=\|10` | Less or equal |
+| `like` | `name\|like\|%keyboard%` | Pattern match |
+| `not like` | `name\|not like\|%test%` | Pattern exclusion |
+| `in` | `id\|in\|1,2,3` | In list |
+| `not in` | `id\|not in\|5,6` | Not in list |
+| `is` | `deleted_at\|is\|null` | Null check |
+| `is not` | `deleted_at\|is not\|null` | Not null check |
+| `between` | `price\|between\|50,100` | Range (inclusive) |
+
+<Note>
+  All operators are validated against the package's allowlist. Custom operators can be added via configuration if needed.
+</Note>
+
+## Common Mistakes
+
+<Warning>
+  **Forgetting to add relations to RELATIONS constant**
+  
+  ```php
+  // In your model
+  const RELATIONS = ['category', 'reviews', 'tags'];
+  ```
+  
+  Unlisted relations will return a 400 error.
+</Warning>
+
+<Warning>
+  **Exceeding filter limits**
+  
+  The package enforces `filtering.max_conditions` (default: 100) to prevent database overload. Split large filters into multiple requests.
+</Warning>
+
+<Warning>
+  **Invalid operator syntax**
+  
+  Use pipe separators: `field|operator|value`
+  
+  ❌ Wrong: `"price > 100"`
+  
+  ✅ Correct: `"price|>|100"`
+</Warning>
+
+## Next Steps
+
+- Learn about [Cache Strategies](/examples/cache-scenarios) to optimize repeated queries
+- Explore [Edge Cases](/examples/edge-cases) for troubleshooting filter issues
+- Review [Configuration Reference](/configuration/overview) for filter limits and operator customization

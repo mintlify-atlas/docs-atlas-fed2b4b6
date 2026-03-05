@@ -1,0 +1,676 @@
+---
+title: 'BaseService'
+description: 'Core service class providing query building, CRUD operations, caching, and export functionality'
+icon: 'gear'
+---
+
+## Overview
+
+`BaseService` is the heart of the package's query processing engine. It provides:
+
+- **Advanced query building**: Dynamic filters, relations, pagination, ordering
+- **CRUD operations**: Create, read, update, delete with validation
+- **Caching layer**: Configurable caching with versioning and invalidation
+- **Hierarchy support**: Tree-structured data retrieval
+- **Export functionality**: Excel and PDF generation
+- **Relation filtering**: Nested queries with `whereHas`
+
+<Info>
+  Create a service for each model by extending `BaseService` and passing the model class to the constructor.
+</Info>
+
+## Constructor
+
+```php
+public function __construct(Model|string $modelClass)
+```
+
+<ParamField path="modelClass" type="Model|string" required>
+  The Eloquent model class (instance or class name string)
+</ParamField>
+
+**Example:**
+```php
+use App\Models\User;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class UserService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(User::class);
+    }
+}
+```
+
+## Query Methods
+
+### list_all()
+
+```php
+public function list_all($params, $toJson = true): mixed
+```
+
+Retrieves all records matching query parameters.
+
+<ParamField path="params" type="array" required>
+  Query parameters object with the following optional keys:
+  
+  - `relations`: Array or JSON string of relations to eager load
+  - `select`: Fields to select (array or comma-separated string)
+  - `attr` / `eq`: Equality filters (deprecated, use `oper` instead)
+  - `oper`: Advanced filter conditions (see Filter Syntax)
+  - `orderby`: Array of `['field' => 'asc'|'desc']`
+  - `pagination`: Pagination config (see Pagination)
+  - `hierarchy`: Hierarchy mode config (see Hierarchy)
+  - `_nested`: If true, applies relation filters to eager loading
+</ParamField>
+
+<ParamField path="toJson" type="bool" default="true">
+  Return JSON-serializable array (vs raw collection)
+</ParamField>
+
+<ResponseField name="return" type="array|LengthAwarePaginator|CursorPaginator">
+  Results depend on pagination:
+  - No pagination: `['data' => [...]]`
+  - With pagination: `LengthAwarePaginator` or `CursorPaginator`
+  - Hierarchy mode: Nested tree structure
+</ResponseField>
+
+**Example:**
+```php
+$params = [
+    'relations' => ['posts', 'roles'],
+    'select' => ['id', 'name', 'email'],
+    'oper' => [
+        'and' => [
+            'status = active',
+            'created_at > 2024-01-01'
+        ]
+    ],
+    'orderby' => [['created_at' => 'desc']],
+    'pagination' => ['page' => 1, 'pageSize' => 20]
+];
+
+$result = $service->list_all($params);
+```
+
+### get_one()
+
+```php
+public function get_one($params, $toJson = true): mixed
+```
+
+Retrieves first record matching query parameters.
+
+<ParamField path="params" type="array" required>
+  Same parameters as `list_all()` (pagination ignored)
+</ParamField>
+
+<ParamField path="toJson" type="bool" default="true">
+  Return JSON-serializable array
+</ParamField>
+
+<ResponseField name="return" type="array">
+  `['data' => Model|null]`
+</ResponseField>
+
+**Example:**
+```php
+$result = $service->get_one([
+    'oper' => ['email = john@example.com']
+]);
+// ['data' => ['id' => 1, 'name' => 'John', ...]]
+```
+
+### show()
+
+```php
+public function show($params, $id): mixed
+```
+
+Retrieves a single record by ID with optional relations.
+
+<ParamField path="params" type="array" required>
+  - `relations`: Relations to load
+  - `select`: Fields to select
+  - `hierarchy`: Hierarchy mode (see `showHierarchy()`)
+</ParamField>
+
+<ParamField path="id" type="mixed" required>
+  Primary key value
+</ParamField>
+
+<ResponseField name="return" type="Model|array">
+  Model instance or hierarchical array structure
+</ResponseField>
+
+**Example:**
+```php
+$user = $service->show(['relations' => ['posts', 'roles']], 1);
+```
+
+## CRUD Methods
+
+### create()
+
+```php
+public function create(array $params): array
+```
+
+Creates one or more records.
+
+<ParamField path="params" type="array" required>
+  Single record attributes OR wrapped array:
+  ```php
+  // Single record
+  ['name' => 'John', 'email' => 'john@example.com']
+  
+  // Multiple records
+  ['user' => [
+      ['name' => 'John', 'email' => 'john@example.com'],
+      ['name' => 'Jane', 'email' => 'jane@example.com']
+  ]]
+  ```
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  [
+    'success' => true,
+    'model' => array // Created attributes
+  ]
+  // OR for multiple:
+  [
+    'success' => true,
+    'models' => [
+      ['success' => true, 'model' => [...]],
+      ['success' => true, 'model' => [...]]
+    ]
+  ]
+  ```
+</ResponseField>
+
+**Example:**
+```php
+$result = $service->create([
+    'name' => 'John Doe',
+    'email' => 'john@example.com',
+    'password' => bcrypt('secret')
+]);
+
+if ($result['success']) {
+    $user = $result['model'];
+}
+```
+
+### update()
+
+```php
+public function update(array $attributes, $id, $validate = false): array
+```
+
+Updates a single record by ID.
+
+<ParamField path="attributes" type="array" required>
+  Fields to update (partial updates supported)
+</ParamField>
+
+<ParamField path="id" type="mixed" required>
+  Primary key or `fieldKeyUpdate` value
+</ParamField>
+
+<ParamField path="validate" type="bool" default="false">
+  Run validation before saving
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  [
+    'success' => true,
+    'model' => array // Updated attributes
+  ]
+  // OR on validation failure:
+  [
+    'success' => false,
+    'errors' => [...]
+  ]
+  ```
+</ResponseField>
+
+**Example:**
+```php
+$result = $service->update(
+    ['status' => 'active', 'verified_at' => now()],
+    1,
+    true // validate
+);
+```
+
+### update_multiple()
+
+```php
+public function update_multiple(array $params, $validate = false): array
+```
+
+Updates multiple records at once.
+
+<ParamField path="params" type="array" required>
+  Array of records with primary keys:
+  ```php
+  [
+    ['id' => 1, 'status' => 'active'],
+    ['id' => 2, 'status' => 'inactive']
+  ]
+  ```
+</ParamField>
+
+<ParamField path="validate" type="bool" default="false">
+  Validate each record before saving
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  [
+    'success' => true,
+    'models' => [
+      ['success' => true, 'model' => [...]],
+      ['success' => false, 'errors' => [...]]
+    ]
+  ]
+  ```
+</ResponseField>
+
+### destroy()
+
+```php
+public function destroy($id): array
+```
+
+Deletes a record by ID.
+
+<ParamField path="id" type="mixed" required>
+  Primary key value
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  ['success' => true, 'model' => Model]
+  ```
+</ResponseField>
+
+**Example:**
+```php
+$result = $service->destroy(1);
+if ($result['success']) {
+    // Record deleted
+}
+```
+
+### destroybyid()
+
+```php
+public function destroybyid($id): array
+```
+
+Deletes records using Eloquent's static `destroy()` method (supports multiple IDs).
+
+<ParamField path="id" type="mixed|array" required>
+  Single ID or array of IDs
+</ParamField>
+
+**Example:**
+```php
+// Delete multiple
+$result = $service->destroybyid([1, 2, 3]);
+```
+
+## Hierarchy Methods
+
+### showHierarchy()
+
+```php
+public function showHierarchy(array $params, mixed $id): array
+```
+
+Retrieves a record in hierarchical structure.
+
+<ParamField path="params" type="array" required>
+  Query params with `hierarchy` config:
+  ```php
+  [
+    'hierarchy' => [
+      'mode' => 'with_descendants', // or 'node_only', 'with_ancestors', 'full_branch'
+      'children_key' => 'children',
+      'max_depth' => null, // or integer
+      'include_empty_children' => true
+    ],
+    'relations' => [...],
+    'select' => [...]
+  ]
+  ```
+</ParamField>
+
+<ParamField path="id" type="mixed" required>
+  Record ID
+</ParamField>
+
+<ResponseField name="return" type="array">
+  Nested tree structure based on `mode`:
+  
+  - `node_only`: Just the node with empty children array
+  - `with_descendants`: Node + all descendants as nested tree
+  - `with_ancestors`: Chain from root down to node
+  - `full_branch`: Entire branch (ancestors + node + descendants)
+</ResponseField>
+
+**Example:**
+```php
+$category = $service->showHierarchy([
+    'hierarchy' => [
+        'mode' => 'with_descendants',
+        'max_depth' => 2
+    ],
+    'relations' => ['products']
+], 5);
+
+// Returns nested structure:
+// [
+//   'id' => 5,
+//   'name' => 'Electronics',
+//   'children' => [
+//     ['id' => 10, 'name' => 'Phones', 'children' => [...]],
+//     ['id' => 11, 'name' => 'Laptops', 'children' => [...]]
+//   ]
+// ]
+```
+
+## Export Methods
+
+### exportExcel()
+
+```php
+public function exportExcel($params)
+```
+
+Exports query results to Excel file.
+
+<ParamField path="params" type="array" required>
+  Same query params as `list_all()` plus:
+  - `filename`: Output filename (default: `excel.xlsx`)
+  - `columns`: Columns to include (default: uses `select` or all fillable)
+</ParamField>
+
+<ResponseField name="return" type="BinaryFileResponse">
+  Excel file download response
+</ResponseField>
+
+**Example:**
+```php
+return $service->exportExcel([
+    'oper' => ['status = active'],
+    'columns' => ['id', 'name', 'email', 'created_at'],
+    'filename' => 'active-users.xlsx'
+]);
+```
+
+### exportPdf()
+
+```php
+public function exportPdf($params)
+```
+
+Exports query results to PDF file.
+
+<ParamField path="params" type="array" required>
+  Same query params plus:
+  - `filename`: Output filename (default: `pdf_file.pdf`)
+  - `template`: Blade view name (default: `pdf`)
+  - `columns`: Columns to include
+</ParamField>
+
+<ResponseField name="return" type="Response">
+  PDF file download response
+</ResponseField>
+
+**Example:**
+```php
+return $service->exportPdf([
+    'oper' => ['created_at >= 2024-01-01'],
+    'template' => 'reports.users',
+    'filename' => 'users-report.pdf'
+]);
+```
+
+## Filter Syntax (oper)
+
+The `oper` parameter supports advanced filtering with logical operators and conditions.
+
+### Structure
+
+```php
+[
+    'and' => [
+        'field operator value',
+        'another_field operator value'
+    ],
+    'or' => [
+        'status = active',
+        'status = pending'
+    ]
+]
+```
+
+### Supported Operators
+
+- `=`, `!=`, `<`, `>`, `<=`, `>=`
+- `like`, `not like`, `ilike`, `not ilike`
+- `in`, `not in`
+- `between`, `not between`
+- `date`, `not date`
+- `null`, `not null`
+- `exists`, `not exists`
+- `regexp`, `not regexp`
+
+### Examples
+
+```php
+// Simple AND conditions
+$params = [
+    'oper' => [
+        'status = active',
+        'created_at > 2024-01-01'
+    ]
+];
+
+// Mixed AND/OR
+$params = [
+    'oper' => [
+        'and' => [
+            'status = active',
+            'verified = 1'
+        ],
+        'or' => [
+            'role = admin',
+            'role = moderator'
+        ]
+    ]
+];
+
+// Relation filters (requires model to have RELATIONS defined)
+$params = [
+    'oper' => [
+        'posts' => [
+            'published = 1',
+            'created_at > 2024-01-01'
+        ]
+    ],
+    'relations' => ['posts']
+];
+
+// With _nested=true, filters apply to eager loaded data
+$params = [
+    'oper' => [
+        'posts' => ['published = 1']
+    ],
+    'relations' => ['posts'],
+    '_nested' => true
+];
+```
+
+## Pagination
+
+### Standard Pagination
+
+```php
+$params = [
+    'pagination' => [
+        'page' => 1,
+        'pageSize' => 20
+    ]
+];
+
+$result = $service->list_all($params);
+// Returns Laravel LengthAwarePaginator
+```
+
+### Cursor Pagination (Infinite Scroll)
+
+```php
+$params = [
+    'pagination' => [
+        'pageSize' => 20,
+        'infinity' => true,
+        'cursor' => null // or cursor from previous response
+    ]
+];
+
+$result = $service->list_all($params);
+// Returns Laravel CursorPaginator
+```
+
+## Caching
+
+BaseService includes a built-in caching layer with versioning.
+
+### Configuration
+
+In `config/rest-generic-class.php`:
+
+```php
+'cache' => [
+    'enabled' => true,
+    'store' => 'redis', // or null for default
+    'ttl' => 3600, // seconds
+    'ttl_by_method' => [
+        'list_all' => 1800,
+        'get_one' => 3600,
+    ],
+    'cacheable_methods' => ['list_all', 'get_one'],
+    'vary' => [
+        'headers' => ['Accept-Language', 'X-Tenant-ID']
+    ]
+],
+```
+
+### Cache Invalidation
+
+Cache is automatically invalidated (version bumped) after:
+- `create()`
+- `update()`
+- `update_multiple()`
+- `destroy()`
+- `destroybyid()`
+
+### Per-Request Control
+
+```php
+// Disable cache for this request
+$params = ['cache' => false];
+
+// Custom TTL for this request
+$params = ['cache_ttl' => 600]; // 10 minutes
+
+$result = $service->list_all($params);
+```
+
+## Relations with Field Selection
+
+Load relations with specific fields to optimize queries.
+
+```php
+$params = [
+    'relations' => [
+        'posts:id,title,published_at',
+        'roles:id,name',
+        'comments'
+    ]
+];
+
+$result = $service->list_all($params);
+```
+
+**Important:** Foreign keys are automatically included even if not specified.
+
+## Nested Relations
+
+```php
+$params = [
+    'relations' => [
+        'posts',
+        'posts.comments',
+        'posts.comments.author'
+    ]
+];
+```
+
+## Complete Example
+
+```php
+use App\Models\User;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class UserService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(User::class);
+    }
+    
+    public function getActiveUsersWithPosts()
+    {
+        return $this->list_all([
+            'relations' => ['posts:id,title,created_at', 'roles'],
+            'select' => ['id', 'name', 'email', 'created_at'],
+            'oper' => [
+                'and' => [
+                    'status = active',
+                    'email_verified_at != null'
+                ],
+                'posts' => ['published = 1']
+            ],
+            'orderby' => [['created_at' => 'desc']],
+            'pagination' => ['page' => 1, 'pageSize' => 20],
+            '_nested' => true
+        ]);
+    }
+}
+
+// Usage in controller
+$service = new UserService();
+$result = $service->getActiveUsersWithPosts();
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="BaseModel" icon="database" href="/api/base-model">
+    Model class with validation and hierarchy support
+  </Card>
+  <Card title="RestController" icon="server" href="/api/rest-controller">
+    Controller exposing service methods as REST endpoints
+  </Card>
+  <Card title="Filter Syntax" icon="filter" href="/features/filters">
+    Complete guide to filter operators and syntax
+  </Card>
+</CardGroup>

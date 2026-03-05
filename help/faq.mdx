@@ -1,0 +1,272 @@
+---
+title: Frequently Asked Questions
+description: Common questions about Rest Generic Class for Laravel
+---
+
+Find answers to commonly asked questions about using Rest Generic Class in your Laravel applications.
+
+## General Usage
+
+<Accordion title="Does this package register routes for me?">
+  No. Rest Generic Class does not automatically register routes. You maintain full control over your routing.
+
+  You register routes in your Laravel application's route files and wire them to controllers that extend `RestController`:
+
+  ```php
+  use App\Http\Controllers\Api\ProductController;
+
+  Route::prefix('v1')->group(function () {
+      Route::apiResource('products', ProductController::class);
+      Route::post('products/update-multiple', 
+          [ProductController::class, 'updateMultiple']);
+  });
+  ```
+
+  This gives you complete flexibility over URL structure, middleware, and route organization.
+</Accordion>
+
+<Accordion title="Can I use MongoDB with this package?">
+  Yes! The package includes a `BaseModelMongo` class specifically for MongoDB usage through the `mongodb/laravel` package.
+
+  ```php
+  use Ronu\RestGenericClass\Core\Models\BaseModelMongo;
+
+  class Product extends BaseModelMongo
+  {
+      protected $connection = 'mongodb';
+      const MODEL = 'product';
+      const RELATIONS = ['category', 'reviews'];
+  }
+  ```
+
+  <Note>
+    You are responsible for installing and configuring `mongodb/laravel` in your application. The package provides the base model but doesn't include MongoDB dependencies.
+  </Note>
+</Accordion>
+
+<Accordion title="Is Spatie permission package required?">
+  No. Spatie's `laravel-permission` package is completely optional.
+
+  The permission models, traits, and middleware are available if you choose to install `spatie/laravel-permission`, but the core functionality works without it.
+
+  ```bash
+  # Optional - only install if you need permission management
+  composer require spatie/laravel-permission
+  ```
+
+  If you don't install Spatie, you can still use the package's core CRUD, filtering, and relation-loading features.
+</Accordion>
+
+<Accordion title="Does the package support hierarchical tree structures?">
+  Yes! Hierarchy support is built-in when your model defines the `HIERARCHY_FIELD_ID` constant and you pass the `hierarchy` parameter in requests.
+
+  ```php
+  class Category extends BaseModel
+  {
+      const HIERARCHY_FIELD_ID = 'parent_id';
+  }
+  ```
+
+  Request example:
+  ```json
+  {
+    "hierarchy": {
+      "filter_mode": "with_descendants",
+      "children_key": "children",
+      "max_depth": 3
+    }
+  }
+  ```
+
+  See the [Hierarchy documentation](/core/hierarchy) for all available modes and options.
+</Accordion>
+
+## Performance
+
+<Accordion title="How does caching work?">
+  Rest Generic Class supports generic cache integration via Laravel's cache stores (Redis, database, file, Memcached, etc.).
+
+  **Enable caching:**
+  ```env
+  REST_CACHE_ENABLED=true
+  REST_CACHE_STORE=redis
+  REST_CACHE_TTL=60
+  ```
+
+  **Key features:**
+  - Cache is applied to `list_all` and `get_one` operations
+  - Cache keys include model, query params, auth user, and selected headers
+  - Write operations automatically bump a model-level cache version to invalidate stale data
+  - Per-request control via `cache=false` or `cache_ttl=120` parameters
+
+  **Multi-tenant aware:**
+  Cache keys vary by `Accept-Language` and `X-Tenant-Id` headers to prevent cross-tenant data leaks.
+
+  See the [Cache strategy](/configuration/cache-strategy) for complete caching options.
+</Accordion>
+
+<Accordion title="What are the performance limits for filtering?">
+  The package includes built-in safety limits to protect your database:
+
+  | Limit | Default | Config Key |
+  |-------|---------|------------|
+  | Maximum nesting depth | 5 | `filtering.max_depth` |
+  | Maximum conditions | 100 | `filtering.max_conditions` |
+
+  These limits prevent abusive queries with excessive complexity.
+
+  You can adjust them in `config/rest-generic-class.php`:
+
+  ```php
+  'filtering' => [
+      'max_depth' => 10,
+      'max_conditions' => 200,
+  ],
+  ```
+
+  <Warning>
+    Only increase these limits if you have legitimate use cases. Higher limits can impact database performance.
+  </Warning>
+</Accordion>
+
+<Accordion title="How can I optimize queries with many relations?">
+  Use selective field loading to reduce data transfer and improve performance:
+
+  ```http
+  GET /api/v1/products?select=["id","name","price"]&relations=["category:id,name","reviews:id,rating"]
+  ```
+
+  Best practices:
+  - Only load relations you need
+  - Use field selection (`:id,name`) on relations to limit columns
+  - Enable caching for frequently accessed data
+  - Set appropriate cache TTLs based on data volatility
+  - Use pagination for large result sets
+</Accordion>
+
+## Configuration
+
+<Accordion title="Can I use different cache stores for different models?">
+  The package uses a single cache store configured via `REST_CACHE_STORE`.
+
+  However, you can:
+  - Set different TTLs for list vs single record operations:
+    ```env
+    REST_CACHE_TTL_LIST=120
+    REST_CACHE_TTL_ONE=300
+    ```
+  - Override TTL per request:
+    ```http
+    GET /api/v1/products?cache_ttl=600
+    ```
+  - Disable cache per request:
+    ```http
+    GET /api/v1/products?cache=false
+    ```
+
+  The cache version is tracked per model, so updates to one model won't invalidate cache for other models.
+</Accordion>
+
+<Accordion title="How do I enable query logging?">
+  Enable query logging in your environment:
+
+  ```env
+  LOG_QUERY=true
+  ```
+
+  Queries will be logged to `storage/logs/query.log`.
+
+  You can also configure the general log level:
+  ```env
+  LOG_LEVEL=debug
+  ```
+
+  <Note>
+    Query logging can significantly increase log file size. Use it for debugging and disable in production unless actively troubleshooting.
+  </Note>
+</Accordion>
+
+<Accordion title="Why aren't my environment variable changes working?">
+  If you're using Laravel's config caching (common in production), environment variables are cached.
+
+  After changing `.env`, clear the config cache:
+
+  ```bash
+  php artisan config:clear
+  ```
+
+  Then rebuild it:
+  ```bash
+  php artisan config:cache
+  ```
+
+  The package is fully compatible with Laravel's config caching because all environment variables are only referenced in the config file, not directly in code.
+</Accordion>
+
+## Development
+
+<Accordion title="Does the package include tests?">
+  The package does not ship with automated tests. 
+
+  Validation should be performed in your host application with tests covering:
+  - Feature tests for CRUD endpoints using your `RestController` subclasses
+  - Tests for `oper` filtering and relation allowlist enforcement
+  - Tests for hierarchy listing if you use `HIERARCHY_FIELD_ID`
+  - Authorization tests if using Spatie permissions
+
+  This approach ensures tests are relevant to your specific implementation and use cases.
+</Accordion>
+
+<Accordion title="Can I extend or override the base classes?">
+  Absolutely! The package is designed for extension:
+
+  ```php
+  // Extend the base service
+  class ProductService extends BaseService
+  {
+      public function __construct()
+      {
+          parent::__construct(Product::class);
+      }
+
+      // Add custom methods
+      public function getLowStock($threshold = 10)
+      {
+          return $this->model->where('stock', '<', $threshold)->get();
+      }
+  }
+
+  // Extend the controller
+  class ProductController extends RestController
+  {
+      // Override methods or add new endpoints
+      public function lowStock(Request $request)
+      {
+          return response()->json(
+              $this->service->getLowStock($request->input('threshold', 10))
+          );
+      }
+  }
+  ```
+
+  You have complete control over extending functionality while benefiting from the base features.
+</Accordion>
+
+<Accordion title="How do I contribute to the package?">
+  Contributions are welcome! 
+
+  1. Open issues on GitHub for bugs or feature requests
+  2. Submit pull requests with improvements
+  3. For security concerns, report them privately to the maintainer
+
+  See the [Contributing guide](https://github.com/charlietyn/rest-generic-class/blob/main/CONTRIBUTING.md) for detailed guidelines.
+</Accordion>
+
+## Need More Help?
+
+Still have questions?
+
+- Check the [Troubleshooting guide](/help/troubleshooting) for common errors
+- Review the [API Reference](/api/base-model) for detailed documentation
+- Browse [Usage examples](/examples/simple-crud) for practical implementations
+- Open an issue on [GitHub](https://github.com/charlietyn/rest-generic-class)

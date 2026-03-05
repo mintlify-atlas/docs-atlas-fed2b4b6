@@ -1,97 +1,135 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Rest Generic Class for Laravel"
+description: "Build powerful RESTful APIs with dynamic filtering, relation loading, and hierarchical data structures"
 ---
 
-## Setting up
+<div className="bg-white rounded-lg border border-gray-200 p-8 shadow-sm">
+  <h1 className="text-5xl font-bold text-gray-900 mb-4">
+    Rest Generic Class
+  </h1>
+  <p className="text-xl text-gray-600 mb-6">
+    A Laravel package that provides base classes for building RESTful APIs with dynamic filtering, relation loading, and hierarchical data structures.
+  </p>
+  
+  <div className="flex gap-4 mb-6">
+    <a href="/quickstart" className="inline-flex items-center px-6 py-3 bg-gray-200 text-gray-900 rounded-md font-semibold hover:bg-gray-300 transition-colors">
+      Get Started
+    </a>
+    <a href="https://github.com/charlietyn/rest-generic-class" className="inline-flex items-center px-6 py-3 border border-gray-900 text-gray-900 rounded-md font-semibold hover:bg-gray-50 transition-colors">
+      View on GitHub
+    </a>
+  </div>
 
-Get your documentation site up and running in minutes.
+  <div className="flex gap-3">
+    <img src="https://img.shields.io/packagist/v/ronu/rest-generic-class.svg?style=flat-square" alt="Latest Version" />
+    <img src="https://img.shields.io/badge/Laravel-12.x-FF2D20?style=flat-square&logo=laravel" alt="Laravel" />
+    <img src="https://img.shields.io/packagist/l/ronu/rest-generic-class.svg?style=flat-square" alt="License" />
+  </div>
+</div>
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+## Key Features
 
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="RESTful CRUD" icon="brackets-curly" iconType="solid">
+    Base classes for Models, Services, and Controllers to build complete CRUD APIs in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Dynamic Filtering" icon="filter" iconType="solid">
+    Advanced query filtering with operators, nested conditions, and relation constraints
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Relation Loading" icon="diagram-project" iconType="solid">
+    Eager load relations with field selection and nested filtering capabilities
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Hierarchical Data" icon="sitemap" iconType="solid">
+    Built-in support for tree structures with parent-child relationships
   </Card>
-</Columns>
+  <Card title="Laravel Cache" icon="bolt" iconType="solid">
+    Integrated caching with Redis, database, or any Laravel cache driver
+  </Card>
+  <Card title="Role-Based Access" icon="shield-halved" iconType="solid">
+    Field-level restrictions based on Spatie roles and permissions
+  </Card>
+  <Card title="Bulk Operations" icon="layer-group" iconType="solid">
+    Update multiple records in a single request with validation
+  </Card>
+  <Card title="Custom Validation" icon="circle-check" iconType="solid">
+    Powerful validation rules for IDs, unique constraints, and pivot tables
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Quick Example
 
-Everything you need to create world-class documentation.
+Get a working REST API in just three files:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+```php Product.php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
 
-## Need inspiration?
+class Product extends BaseModel
+{
+    protected $fillable = ['name', 'price', 'stock', 'category_id'];
+    
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews'];
+    
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+}
+```
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+```php ProductService.php
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+}
+```
+
+```php ProductController.php
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    protected $modelClass = Product::class;
+    
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+}
+```
+
+Then query with powerful filters:
+
+```http
+GET /api/v1/products?select=["id","name","price"]&relations=["category:id,name"]
+```
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active", "price|>=|50"]
+  }
+}
+```
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes with our quickstart guide
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Learn the fundamental concepts behind Rest Generic Class
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/base-model">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Examples" icon="lightbulb" href="/examples/simple-crud">
+    Browse real-world usage examples and scenarios
+  </Card>
+</CardGroup>

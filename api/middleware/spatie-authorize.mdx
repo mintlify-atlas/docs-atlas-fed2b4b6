@@ -1,0 +1,312 @@
+---
+title: SpatieAuthorize
+description: Automatic permission-based authorization using Spatie Laravel Permission
+---
+
+## Overview
+
+The `SpatieAuthorize` middleware provides centralized, convention-based authorization by automatically deriving required permissions from route metadata. It integrates with [Spatie Laravel Permission](https://spatie.be/docs/laravel-permission) and uses the in-memory permission cache for zero-database-hit authorization checks.
+
+<Note>
+This middleware uses Spatie's `PermissionRegistrar` for cache-aware permission lookups, ensuring high performance even with complex permission structures.
+</Note>
+
+## How It Works
+
+The middleware derives required permissions from (in priority order):
+
+1. **Route action overrides** - Explicit permission definitions via `->defaults('authorize', [...])`
+2. **Route name conventions** - Maps route names like `articles.store` to permissions
+3. **Controller@method conventions** - Derives from `ArticleController@store`
+4. **HTTP verb + URI conventions** - Last resort fallback
+
+## Constructor
+
+<ParamField path="registrar" type="PermissionRegistrar" required>
+  Spatie's permission registrar (automatically injected by Laravel)
+</ParamField>
+
+## Middleware Parameters
+
+<ParamField path="guard" type="string" default="config('auth.defaults.guard')">
+  Authentication guard to use (e.g., `api`, `web`)
+</ParamField>
+
+## Route Registration
+
+### Basic Usage
+
+```php
+use Illuminate\Support\Facades\Route;
+
+Route::middleware('auto.authorize')
+    ->group(function () {
+        Route::get('/articles', [ArticleController::class, 'index']);
+        Route::post('/articles', [ArticleController::class, 'store']);
+    });
+```
+
+### Custom Guard
+
+```php
+Route::middleware('auto.authorize:api')
+    ->prefix('api')
+    ->group(function () {
+        Route::resource('users', UserController::class);
+    });
+```
+
+## Permission Resolution
+
+### Route Name Convention
+
+The middleware maps standard resource route names to permissions:
+
+| Route Name | Derived Permission |
+|------------|-------------------|
+| `articles.index` | `articles.index` |
+| `articles.show` | `articles.view` |
+| `articles.store` | `articles.store` |
+| `articles.update` | `articles.update` |
+| `articles.destroy` | `articles.delete` |
+
+```php
+// Route definition
+Route::get('/articles', [ArticleController::class, 'index'])
+    ->name('articles.index');
+
+// Requires permission: articles.index
+```
+
+### Controller Method Convention
+
+Derives permissions from controller and method names:
+
+```php
+// ArticleController@store
+// Derived permission: article.create
+
+// UserController@destroy
+// Derived permission: user.delete
+```
+
+Mapping:
+
+| Method | Permission Suffix |
+|--------|------------------|
+| `index` | `view` |
+| `show` | `view` |
+| `store` | `create` |
+| `update` | `update` |
+| `destroy` | `delete` |
+
+### HTTP Verb Convention
+
+Last resort: maps HTTP verb + first URI segment:
+
+| Verb | URI | Permission |
+|------|-----|------------|
+| GET | `/articles` | `article.view` |
+| POST | `/articles` | `article.create` |
+| PUT | `/articles/1` | `article.update` |
+| PATCH | `/articles/1` | `article.update` |
+| DELETE | `/articles/1` | `article.delete` |
+
+## Explicit Route Overrides
+
+Override automatic resolution with explicit permission requirements:
+
+### Single Permission
+
+```php
+Route::post('/articles', [ArticleController::class, 'store'])
+    ->name('articles.store')
+    ->defaults('authorize', [
+        'permissions' => 'articles.create',
+    ]);
+```
+
+### Multiple Permissions (OR)
+
+```php
+Route::put('/articles/{article}/publish', [ArticleController::class, 'publish'])
+    ->defaults('authorize', [
+        'permissions' => ['articles.publish', 'articles.manage'],
+        'mode' => 'any', // User needs at least ONE permission (default)
+    ]);
+```
+
+### Multiple Permissions (AND)
+
+```php
+Route::delete('/users/{user}', [UserController::class, 'destroy'])
+    ->defaults('authorize', [
+        'permissions' => ['users.delete', 'users.manage'],
+        'mode' => 'all', // User needs ALL permissions
+    ]);
+```
+
+### Pipe-Separated Syntax
+
+```php
+Route::post('/reports/generate', [ReportController::class, 'generate'])
+    ->defaults('authorize', [
+        'permissions' => 'reports.view|reports.export',
+        'mode' => 'any',
+    ]);
+```
+
+### Custom Guard Override
+
+```php
+Route::post('/admin/settings', [AdminController::class, 'update'])
+    ->defaults('authorize', [
+        'permissions' => 'admin.settings.update',
+        'guard' => 'admin', // Override middleware guard
+    ]);
+```
+
+## Guard Selection Priority
+
+1. Route override: `->defaults('authorize', ['guard' => 'api'])`
+2. Middleware parameter: `auto.authorize:api`
+3. Application default: `config('auth.defaults.guard')`
+
+## Configuration Overrides
+
+Create `config/permission_map.php` for additional customization:
+
+```php
+return [
+    // Strict mode: abort if permission doesn't exist in cache
+    'strict' => env('PERMISSION_STRICT_MODE', false),
+
+    // Custom route name mappings
+    'overrides' => [
+        'api.articles.publish' => 'articles.publish',
+        'api.users.suspend' => 'users.manage',
+    ],
+];
+```
+
+## Teams and Tenants
+
+For multi-tenant applications using Spatie's team support:
+
+```php
+namespace App\Http\Middleware;
+
+use Spatie\Permission\PermissionRegistrar;
+
+class SetPermissionTeam
+{
+    public function handle($request, \Closure $next)
+    {
+        // Set the current team/tenant for permission checks
+        $teamId = $request->user()?->current_team_id;
+
+        if ($teamId) {
+            app(PermissionRegistrar::class)
+                ->setPermissionsTeamId($teamId);
+        }
+
+        return $next($request);
+    }
+}
+```
+
+Register before `auto.authorize`:
+
+```php
+Route::middleware(['auth:api', 'set-team', 'auto.authorize'])
+    ->group(function () {
+        // Routes
+    });
+```
+
+## Error Responses
+
+### Unauthorized Access
+
+```json
+{
+  "message": "Forbidden"
+}
+```
+
+### Debug Mode (app.debug = true)
+
+```json
+{
+  "message": "Forbidden: articles.create"
+}
+```
+
+## Usage Examples
+
+### RESTful Resource
+
+```php
+Route::middleware('auto.authorize')
+    ->resource('articles', ArticleController::class);
+
+// Automatic permissions:
+// GET    /articles        → articles.index
+// GET    /articles/{id}   → articles.view
+// POST   /articles        → articles.store
+// PUT    /articles/{id}   → articles.update
+// DELETE /articles/{id}   → articles.delete
+```
+
+### Mixed Automatic and Explicit
+
+```php
+Route::middleware('auto.authorize')->group(function () {
+    // Automatic: articles.index
+    Route::get('/articles', [ArticleController::class, 'index'])
+        ->name('articles.index');
+
+    // Explicit override
+    Route::post('/articles/{id}/publish', [ArticleController::class, 'publish'])
+        ->defaults('authorize', [
+            'permissions' => ['articles.publish', 'articles.manage'],
+            'mode' => 'any',
+        ]);
+});
+```
+
+### API with Custom Guard
+
+```php
+Route::prefix('api/v1')
+    ->middleware(['auth:api', 'auto.authorize:api'])
+    ->group(function () {
+        Route::apiResource('users', UserController::class);
+        Route::apiResource('posts', PostController::class);
+    });
+```
+
+## Performance Notes
+
+<Tip>
+The middleware uses Spatie's in-memory permission cache (`PermissionRegistrar`), resulting in **zero database queries** for permission checks after initial load.
+</Tip>
+
+## Strict Mode
+
+Enable strict mode to catch permission typos in development:
+
+```php
+// config/permission_map.php
+return [
+    'strict' => env('PERMISSION_STRICT_MODE', true),
+];
+```
+
+When enabled, the middleware will abort if a required permission doesn't exist in the cache.
+
+## See Also
+
+- [FilterRequestByRole Middleware](/api/middleware/filter-request-by-role) - Field-level role restrictions
+- [Spatie Laravel Permission Documentation](https://spatie.be/docs/laravel-permission)
+- [TransformData Middleware](/api/middleware/transform-data) - Request validation

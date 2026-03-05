@@ -1,0 +1,688 @@
+---
+title: 'RestController'
+description: 'Base controller exposing RESTful endpoints with automatic error handling and request processing'
+icon: 'server'
+---
+
+## Overview
+
+`RestController` is the base controller class that:
+
+- **Exposes REST endpoints**: Standard CRUD operations via HTTP
+- **Processes query parameters**: Converts request params to service-compatible format
+- **Handles errors**: Database exception parsing with user-friendly messages
+- **Supports exports**: Excel and PDF export endpoints
+- **Transaction management**: Automatic database transactions for write operations
+- **Logging**: Configurable query logging
+
+<Info>
+  Extend `RestController` and set `$modelClass` and `$service` properties to instantly create a REST API for your model.
+</Info>
+
+## Properties
+
+### modelClass
+
+```php
+protected BaseModel|string $modelClass = "";
+```
+
+The Eloquent model class (used for model name extraction).
+
+### service
+
+```php
+protected BaseService|string $service = "";
+```
+
+The service instance handling business logic.
+
+## Core Methods
+
+### process_request()
+
+```php
+public function process_request(Request $request): array
+```
+
+Extracts and normalizes query parameters from the request.
+
+<ParamField path="request" type="Request" required>
+  Laravel HTTP request object
+</ParamField>
+
+<ResponseField name="return" type="array">
+  Normalized parameters object:
+  ```php
+  [
+    'relations' => string|array|null,
+    '_nested' => bool,
+    'soft_delete' => mixed|null,
+    'attr' => array|null, // equality filters
+    'select' => string|array,
+    'pagination' => array|null,
+    'orderby' => array|null,
+    'oper' => array|string|null,
+    'hierarchy' => mixed|null
+  ]
+  ```
+</ResponseField>
+
+**Merging behavior:**
+- Merges query string and request body parameters
+- `attr` and `eq` are merged if both present
+- All parameters are optional (null if not provided)
+
+**Example request:**
+```
+GET /api/users?relations=["posts","roles"]&oper={"and":["status = active"]}&pagination={"page":1,"pageSize":20}
+```
+
+### handleDatabaseException()
+
+```php
+protected function handleDatabaseException(\Throwable $e): DatabaseErrorParserException
+```
+
+Parses database exceptions into user-friendly error messages.
+
+<ParamField path="e" type="Throwable" required>
+  Database exception (QueryException or PDOException)
+</ParamField>
+
+<ResponseField name="return" type="DatabaseErrorParserException">
+  Parsed exception with:
+  - HTTP status code
+  - User-friendly message
+  - Error type (e.g., "unique_violation", "foreign_key_violation")
+</ResponseField>
+
+**Handles:**
+- Foreign key violations
+- Unique constraint violations
+- NOT NULL violations
+- Syntax errors
+- Connection errors
+
+**Logging:**
+Full exception details are logged to the `rest-generic-class` channel.
+
+### callAction()
+
+```php
+public function callAction($method, $parameters)
+```
+
+Intercepts method calls for logging (if enabled).
+
+**Configuration:**
+```php
+// config/rest-generic-class.php
+'logging' => [
+    'query' => true, // Enable query logging
+],
+```
+
+**Log location:** `storage/logs/query.log`
+
+## REST Endpoints
+
+### index()
+
+```php
+public function index(Request $request): LengthAwarePaginator|array|CursorPaginator
+```
+
+**HTTP:** `GET /resource`
+
+Retrieves a list of resources.
+
+<ParamField query="relations" type="string|array">
+  Relations to eager load (JSON array or comma-separated)
+</ParamField>
+
+<ParamField query="select" type="string|array">
+  Fields to select
+</ParamField>
+
+<ParamField query="oper" type="string|array">
+  Filter conditions (JSON object)
+</ParamField>
+
+<ParamField query="orderby" type="string|array">
+  Ordering (JSON array of `{"field": "direction"}`)
+</ParamField>
+
+<ParamField query="pagination" type="string|object">
+  Pagination config (JSON object with `page`, `pageSize`, `infinity`, `cursor`)
+</ParamField>
+
+<ParamField query="hierarchy" type="string|object">
+  Hierarchy mode config
+</ParamField>
+
+<ParamField query="_nested" type="boolean">
+  Apply relation filters to eager loading
+</ParamField>
+
+<ResponseField name="200" type="array|LengthAwarePaginator">
+  ```json
+  {
+    "data": [
+      {"id": 1, "name": "John", "email": "john@example.com"},
+      {"id": 2, "name": "Jane", "email": "jane@example.com"}
+    ]
+  }
+  // OR paginated:
+  {
+    "current_page": 1,
+    "data": [...],
+    "total": 100,
+    "per_page": 20,
+    "last_page": 5
+  }
+  ```
+</ResponseField>
+
+**Example:**
+```bash
+curl "https://api.example.com/users?relations=[\"posts\"]&oper={\"and\":[\"status = active\"]}&pagination={\"page\":1,\"pageSize\":20}"
+```
+
+### getOne()
+
+```php
+public function getOne(Request $request): array
+```
+
+**HTTP:** `GET /resource/first`
+
+Retrieves the first record matching filters.
+
+<ParamField query="..." type="mixed">
+  Same query parameters as `index()`
+</ParamField>
+
+<ResponseField name="200" type="array">
+  ```json
+  {
+    "data": {"id": 1, "name": "John", "email": "john@example.com"}
+  }
+  ```
+</ResponseField>
+
+### show()
+
+```php
+public function show(Request $request, $id): mixed
+```
+
+**HTTP:** `GET /resource/{id}`
+
+Retrieves a single resource by ID.
+
+<ParamField path="id" type="mixed" required>
+  Resource ID
+</ParamField>
+
+<ParamField query="relations" type="string|array">
+  Relations to load
+</ParamField>
+
+<ParamField query="select" type="string|array">
+  Fields to select
+</ParamField>
+
+<ParamField query="hierarchy" type="string|object">
+  Hierarchy mode
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "posts": [...],
+    "roles": [...]
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404" type="object">
+  Model not found
+</ResponseField>
+
+**Example:**
+```bash
+curl "https://api.example.com/users/1?relations=[\"posts\",\"roles\"]"
+```
+
+### store()
+
+```php
+public function store(BaseFormRequest $request): array
+```
+
+**HTTP:** `POST /resource`
+
+Creates a new resource (or multiple).
+
+<ParamField body="..." type="object" required>
+  Resource attributes OR wrapped array:
+  ```json
+  {"name": "John", "email": "john@example.com"}
+  
+  // OR multiple:
+  {
+    "user": [
+      {"name": "John", "email": "john@example.com"},
+      {"name": "Jane", "email": "jane@example.com"}
+    ]
+  }
+  ```
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {
+    "success": true,
+    "model": {"id": 1, "name": "John", "email": "john@example.com"}
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="422" type="object">
+  Validation failed
+</ResponseField>
+
+**Transaction handling:**
+- Automatically wraps in database transaction
+- Commits on success
+- Rolls back on error
+
+**Example:**
+```bash
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"John Doe","email":"john@example.com","password":"secret"}'
+```
+
+### update()
+
+```php
+public function update(Request $request, $id): mixed
+```
+
+**HTTP:** `PUT/PATCH /resource/{id}`
+
+Updates an existing resource.
+
+<ParamField path="id" type="mixed" required>
+  Resource ID
+</ParamField>
+
+<ParamField body="..." type="object" required>
+  Fields to update (partial updates supported)
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {
+    "success": true,
+    "model": {"id": 1, "name": "John Updated", ...}
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404" type="object">
+  Resource not found
+</ResponseField>
+
+<ResponseField name="422" type="object">
+  Validation failed
+</ResponseField>
+
+**Example:**
+```bash
+curl -X PATCH https://api.example.com/users/1 \
+  -H "Content-Type: application/json" \
+  -d '{"status":"active"}'
+```
+
+### updateMultiple()
+
+```php
+public function updateMultiple(Request $request): mixed
+```
+
+**HTTP:** `PATCH /resource/batch`
+
+Updates multiple resources at once.
+
+<ParamField body="{model}" type="array" required>
+  Array of objects with IDs:
+  ```json
+  {
+    "user": [
+      {"id": 1, "status": "active"},
+      {"id": 2, "status": "inactive"}
+    ]
+  }
+  ```
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {
+    "success": true,
+    "models": [
+      {"success": true, "model": {...}},
+      {"success": true, "model": {...}}
+    ]
+  }
+  ```
+</ResponseField>
+
+### destroy()
+
+```php
+public function destroy($id): array
+```
+
+**HTTP:** `DELETE /resource/{id}`
+
+Deletes a resource by ID.
+
+<ParamField path="id" type="mixed" required>
+  Resource ID
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {
+    "success": true,
+    "model": {...}
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404" type="object">
+  Resource not found
+</ResponseField>
+
+**Example:**
+```bash
+curl -X DELETE https://api.example.com/users/1
+```
+
+### deleteById()
+
+```php
+public function deleteById(Request $request): array
+```
+
+**HTTP:** `DELETE /resource/batch`
+
+Deletes multiple resources by IDs.
+
+<ParamField body="ids" type="array" required>
+  Array of IDs to delete
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {"success": true}
+  ```
+</ResponseField>
+
+## Export Endpoints
+
+### export_excel()
+
+```php
+public function export_excel(Request $request)
+```
+
+**HTTP:** `GET /resource/export/excel`
+
+Exports filtered data to Excel.
+
+<ParamField query="..." type="mixed">
+  Same query parameters as `index()` plus:
+</ParamField>
+
+<ParamField query="filename" type="string">
+  Output filename (default: `excel.xlsx`)
+</ParamField>
+
+<ParamField query="columns" type="string|array">
+  Columns to export (default: uses `select` or all fillable)
+</ParamField>
+
+<ResponseField name="200" type="binary">
+  Excel file download
+</ResponseField>
+
+**Example:**
+```bash
+curl "https://api.example.com/users/export/excel?oper={\"status = active\"}&columns=[\"id\",\"name\",\"email\"]&filename=active-users.xlsx"
+```
+
+### export_pdf()
+
+```php
+public function export_pdf(Request $request)
+```
+
+**HTTP:** `GET /resource/export/pdf`
+
+Exports filtered data to PDF.
+
+<ParamField query="..." type="mixed">
+  Same query parameters as `index()` plus:
+</ParamField>
+
+<ParamField query="filename" type="string">
+  Output filename (default: `pdf_file.pdf`)
+</ParamField>
+
+<ParamField query="template" type="string">
+  Blade view name (default: `pdf`)
+</ParamField>
+
+<ParamField query="columns" type="string|array">
+  Columns to export
+</ParamField>
+
+<ResponseField name="200" type="binary">
+  PDF file download
+</ResponseField>
+
+## Validation Endpoint
+
+### actionValidate()
+
+```php
+public function actionValidate(BaseFormRequest $request): JsonResponse
+```
+
+**HTTP:** `POST /resource/validate`
+
+Validates request data without saving.
+
+<ParamField body="..." type="object" required>
+  Data to validate
+</ParamField>
+
+<ResponseField name="200" type="object">
+  ```json
+  {"success": true}
+  ```
+</ResponseField>
+
+<ResponseField name="422" type="object">
+  Validation errors
+</ResponseField>
+
+## Error Handling
+
+All database errors are caught and parsed into user-friendly responses.
+
+### Unique Constraint Violation
+
+```json
+{
+  "message": "The email has already been taken.",
+  "type": "unique_violation",
+  "field": "email",
+  "status": 409
+}
+```
+
+### Foreign Key Violation
+
+```json
+{
+  "message": "Cannot delete record because it is referenced by other records.",
+  "type": "foreign_key_violation",
+  "status": 409
+}
+```
+
+### NOT NULL Violation
+
+```json
+{
+  "message": "The name field is required.",
+  "type": "not_null_violation",
+  "field": "name",
+  "status": 422
+}
+```
+
+## Complete Implementation Example
+
+```php
+use App\Models\User;
+use App\Services\UserService;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class UserController extends RestController
+{
+    public function __construct()
+    {
+        $this->modelClass = User::class;
+        $this->service = new UserService();
+    }
+}
+```
+
+### Route Registration
+
+```php
+// routes/api.php
+use App\Http\Controllers\UserController;
+
+Route::prefix('users')->group(function () {
+    Route::get('/', [UserController::class, 'index']);
+    Route::get('/first', [UserController::class, 'getOne']);
+    Route::get('/{id}', [UserController::class, 'show']);
+    Route::post('/', [UserController::class, 'store']);
+    Route::patch('/{id}', [UserController::class, 'update']);
+    Route::patch('/batch', [UserController::class, 'updateMultiple']);
+    Route::delete('/{id}', [UserController::class, 'destroy']);
+    Route::delete('/batch', [UserController::class, 'deleteById']);
+    Route::get('/export/excel', [UserController::class, 'export_excel']);
+    Route::get('/export/pdf', [UserController::class, 'export_pdf']);
+    Route::post('/validate', [UserController::class, 'actionValidate']);
+});
+```
+
+**That's it!** You now have a complete REST API with:
+- List with filtering, pagination, relations
+- Single record retrieval
+- Create, update, delete operations
+- Batch operations
+- Excel/PDF exports
+- Validation endpoint
+- Automatic error handling
+- Transaction management
+
+## Advanced Usage
+
+### Custom Endpoints
+
+Extend the controller with custom methods:
+
+```php
+class UserController extends RestController
+{
+    public function __construct()
+    {
+        $this->modelClass = User::class;
+        $this->service = new UserService();
+    }
+    
+    public function activateUser(Request $request, $id)
+    {
+        DB::beginTransaction();
+        try {
+            $user = $this->service->show([], $id);
+            $result = $this->service->update(['status' => 'active'], $id);
+            
+            // Send activation email
+            Mail::to($user->email)->send(new UserActivated($user));
+            
+            DB::commit();
+            return $result;
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+}
+```
+
+### Custom Request Validation
+
+Create a FormRequest class:
+
+```php
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class CreateUserRequest extends BaseFormRequest
+{
+    public function rules()
+    {
+        return [
+            'name' => 'required|min:3',
+            'email' => 'required|email|unique:users',
+            'password' => 'required|min:8',
+        ];
+    }
+}
+
+// Use in controller
+public function store(CreateUserRequest $request): array
+{
+    return parent::store($request);
+}
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="BaseModel" icon="database" href="/api/base-model">
+    Model class with validation and hierarchy
+  </Card>
+  <Card title="BaseService" icon="gear" href="/api/base-service">
+    Service layer handling business logic
+  </Card>
+  <Card title="Filter Syntax" icon="filter" href="/features/filters">
+    Complete filter operators reference
+  </Card>
+  <Card title="Middleware" icon="shield" href="/features/middleware">
+    Authentication and authorization
+  </Card>
+</CardGroup>

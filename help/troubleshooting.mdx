@@ -1,0 +1,251 @@
+---
+title: Troubleshooting
+description: Common errors and solutions for Rest Generic Class
+---
+
+This guide covers common errors you may encounter when using Rest Generic Class and how to resolve them.
+
+## Invalid Relations
+
+<Accordion title="Relation 'x' is not allowed">
+  **Cause**: The relation is not listed in `const RELATIONS` and `filtering.strict_relations` is enabled in your configuration.
+
+  **Solution**: 
+  
+  Add the relation to the `RELATIONS` constant on your model:
+
+  ```php
+  class Product extends BaseModel
+  {
+      const RELATIONS = ['category', 'reviews', 'supplier'];
+  }
+  ```
+
+  Alternatively, you can disable strict mode in `config/rest-generic-class.php` (not recommended for production):
+
+  ```php
+  'filtering' => [
+      'strict_relations' => false,
+  ],
+  ```
+
+  <Warning>
+    Disabling strict relations validation can expose unintended data through your API. Always prefer whitelisting relations explicitly.
+  </Warning>
+</Accordion>
+
+## Filter Complexity Limits
+
+<Accordion title='"Maximum nesting depth" or "Maximum conditions" errors'>
+  **Cause**: Your `oper` filter has exceeded the configured limits:
+  - `filtering.max_depth` (default: 5)
+  - `filtering.max_conditions` (default: 100)
+
+  **Solution**:
+
+  Option 1: Reduce filter complexity by simplifying your query conditions.
+
+  Option 2: Increase the limits in `config/rest-generic-class.php`:
+
+  ```php
+  'filtering' => [
+      'max_depth' => 10,        // Increase nesting depth
+      'max_conditions' => 200,  // Increase condition limit
+  ],
+  ```
+
+  <Note>
+    These limits protect your database from abusive queries. Only increase them if you have legitimate use cases requiring complex filters.
+  </Note>
+</Accordion>
+
+## Hierarchy Issues
+
+<Accordion title='"Invalid hierarchy mode" or hierarchy not supported'>
+  **Cause**: Either an invalid `hierarchy.filter_mode` was provided, or the model is missing the `HIERARCHY_FIELD_ID` constant.
+
+  **Solution**:
+
+  1. Define the hierarchy field in your model:
+
+  ```php
+  class Category extends BaseModel
+  {
+      const HIERARCHY_FIELD_ID = 'parent_id';
+  }
+  ```
+
+  2. Use a valid hierarchy mode in your request:
+
+  ```json
+  {
+    "hierarchy": {
+      "filter_mode": "with_descendants",
+      "children_key": "children",
+      "max_depth": 3
+    }
+  }
+  ```
+
+  Valid modes:
+  - `match_only` - Only matching records
+  - `with_ancestors` - Include parent records
+  - `with_descendants` - Include child records
+  - `full_branch` - Include ancestors and descendants
+  - `root_filter` - Start from root nodes
+</Accordion>
+
+## Export Functionality
+
+<Accordion title='Export methods fail (exportExcel/exportPdf)'>
+  **Cause**: The optional export packages are not installed. These packages are not included by default.
+
+  **Solution**:
+
+  Install the required packages based on your export needs:
+
+  For Excel export:
+  ```bash
+  composer require maatwebsite/excel
+  ```
+
+  For PDF export:
+  ```bash
+  composer require barryvdh/laravel-dompdf
+  ```
+
+  Both packages are listed in the `suggest` section of `composer.json` and are only required if you use `exportExcel()` or `exportPdf()` methods.
+</Accordion>
+
+## Authorization Issues
+
+<Accordion title='Spatie authorization fails unexpectedly'>
+  **Cause**: Common causes include:
+  - Permission cache not refreshed after changes
+  - Tenant or guard mismatch
+  - Middleware execution order issues
+
+  **Solution**:
+
+  1. Clear the Spatie permission cache:
+
+  ```bash
+  php artisan cache:forget spatie.permission.cache
+  ```
+
+  Or use the Spatie command:
+
+  ```bash
+  php artisan permission:cache-reset
+  ```
+
+  2. Ensure guard and team ID are set before authorization middleware runs:
+
+  ```php
+  Route::middleware(['auth:api', 'tenant.resolve'])
+      ->group(function () {
+          Route::apiResource('products', ProductController::class);
+      });
+  ```
+
+  3. Verify the middleware execution order - tenant/guard resolution must occur before permission checks.
+
+  <Note>
+    The package caches permissions using Spatie's cache to avoid repeated database queries. Always clear the cache after permission changes.
+  </Note>
+</Accordion>
+
+## Column Validation Errors
+
+<Accordion title='"Invalid column" or column validation errors'>
+  **Cause**: Column validation is enabled (default) and you're attempting to filter or select non-existent columns.
+
+  **Solution**:
+
+  1. Verify the column exists in your database table
+  2. Check for typos in column names (validation is case-sensitive)
+  3. Ensure you're using the correct table column names, not relation fields
+
+  If you need to disable column validation (not recommended):
+
+  ```php
+  'filtering' => [
+      'validate_columns' => false,
+      'strict_column_validation' => false,
+  ],
+  ```
+
+  <Warning>
+    Disabling column validation can expose your application to SQL errors and potential security issues. Always prefer fixing the actual column names.
+  </Warning>
+</Accordion>
+
+## Cache Issues
+
+<Accordion title='Stale data or cache not invalidating'>
+  **Cause**: Cache is enabled but not invalidating properly after write operations.
+
+  **Solution**:
+
+  1. Verify your cache store is configured correctly:
+
+  ```env
+  REST_CACHE_ENABLED=true
+  REST_CACHE_STORE=redis
+  ```
+
+  2. Clear all cache manually:
+
+  ```bash
+  php artisan cache:clear
+  ```
+
+  3. Disable cache for specific requests:
+
+  ```http
+  GET /api/v1/products?cache=false
+  ```
+
+  4. Check that write operations (create, update, delete) are bumping the model cache version correctly.
+
+  <Note>
+    The package automatically invalidates cache by bumping a model-level version on any write operation. This avoids stale reads without needing cache tags.
+  </Note>
+</Accordion>
+
+## Configuration Cache
+
+<Accordion title='Configuration changes not taking effect'>
+  **Cause**: Laravel's configuration cache is active and needs to be cleared.
+
+  **Solution**:
+
+  Clear the configuration cache:
+
+  ```bash
+  php artisan config:clear
+  ```
+
+  In production, after clearing, rebuild the cache:
+
+  ```bash
+  php artisan config:cache
+  ```
+
+  <Note>
+    Environment variable changes are only reflected in the config file. When config caching is active, you must clear and recache after any .env changes.
+  </Note>
+</Accordion>
+
+## Need More Help?
+
+If you're still experiencing issues:
+
+1. Check the [FAQ](/help/faq) for common questions
+2. Review the [Security guide](/help/security) for security-related issues
+3. Consult the [API Reference](/api/base-model) for detailed method documentation
+4. Open an issue on [GitHub](https://github.com/charlietyn/rest-generic-class) with:
+   - Your Laravel version
+   - Package version (from `composer.json`)
+   - Error messages and stack traces
+   - Minimal reproduction steps

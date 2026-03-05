@@ -1,0 +1,729 @@
+---
+title: ManagesManyToMany Trait
+description: API reference for the ManagesManyToMany trait that provides CRUD operations for BelongsToMany relationships
+---
+
+## Overview
+
+The `ManagesManyToMany` trait provides complete CRUD functionality for many-to-many (BelongsToMany) relationships with support for:
+
+- Reading related records with filtering, pagination, and sorting
+- Creating related records through the relationship
+- Updating related records and pivot data
+- Deleting related records and pivot associations
+- Attaching/detaching existing records
+- Syncing and toggling associations
+- Bulk operations for all mutation methods
+- Excel/PDF export of related data
+
+**Namespace**: `Ronu\RestGenericClass\Core\Traits\ManagesManyToMany`
+
+**Location**: `/src/Core/Traits/ManagesManyToMany.php:40`
+
+## Configuration
+
+### Basic Setup
+
+Add the trait to your controller and define `$manyToManyConfig`:
+
+```php
+use Ronu\RestGenericClass\Core\Traits\ManagesManyToMany;
+
+class UserController extends RestController
+{
+    use ManagesManyToMany;
+    
+    protected array $manyToManyConfig = [
+        'addresses' => [
+            'relationship'  => 'array_address',      // BelongsToMany method on parent
+            'relatedModel'  => Address::class,
+            'pivotModel'    => UserAddress::class,
+            'parentModel'   => User::class,
+            'parentKey'     => 'user_id',
+            'relatedKey'    => 'address_id',
+            
+            'mutation' => [
+                'dataKey'       => ['Addresses', 'addresses'],
+                'deleteRelated' => true,
+                'pivotColumns'  => ['is_primary', 'label'],
+            ],
+        ],
+    ];
+}
+```
+
+### Configuration Options
+
+#### Required
+
+- `relationship` (string) - Name of the BelongsToMany method on the parent model
+- `relatedModel` (string) - Fully qualified class name of the related model
+- `pivotModel` (string) - Pivot table model class
+- `parentModel` (string) - Parent model class name
+- `parentKey` (string) - Foreign key column in pivot table for parent
+- `relatedKey` (string) - Foreign key column in pivot table for related model
+
+#### Optional (mutation)
+
+- `dataKey` (array|string) - Request keys to extract data from (default: `[]`)
+- `deleteRelated` (bool) - Delete related model on `deleteRelation` (default: `true`)
+- `pivotColumns` (array) - Whitelist of allowed pivot columns (default: `[]` = all)
+
+## Read Operations
+
+### listRelation
+
+List related entities with filtering, pagination, and sorting.
+
+```php
+public function listRelation(Request $request, mixed $parentId = null): LengthAwarePaginator|array
+```
+
+#### Parameters
+
+- `Request $request` - HTTP request with query parameters
+- `mixed $parentId` - Parent ID (null = auth user)
+
+#### Query Parameters
+
+- `select` - Columns to select (default: `['*']`)
+- `relations` - Relations to eager-load
+- `eq`/`attr` - Equality filters
+- `oper` - Complex filters (see [Filtering](/core/filtering))
+- `orderby` - Sort order
+- `pagination` - Pagination settings
+
+#### Example
+
+```http
+GET /api/users/1/addresses?select=id,street,city&orderby={"city":"asc"}&pagination={"page":1,"pageSize":20}
+```
+
+Response:
+```json
+{
+  "current_page": 1,
+  "data": [
+    {
+      "id": 5,
+      "street": "123 Main St",
+      "city": "Boston",
+      "pivot": {
+        "user_id": 1,
+        "address_id": 5,
+        "is_primary": true,
+        "label": "Home"
+      }
+    }
+  ],
+  "per_page": 20,
+  "total": 3
+}
+```
+
+### showRelation
+
+Retrieve a single related entity.
+
+```php
+public function showRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId, 
+    mixed $relatedId = null
+): mixed
+```
+
+#### Parameters
+
+- `Request $request` - HTTP request
+- `mixed $parentIdOrRelatedId` - Parent ID (admin) or related ID (site/mobile)
+- `mixed $relatedId` - Related ID (admin only)
+
+#### Route Shapes
+
+```php
+// Site/Mobile: uses auth user as parent
+GET /addresses/5
+
+// Admin: explicit parent ID
+GET /users/1/addresses/5
+```
+
+#### Returns
+
+- Related model instance on success
+- 404 JSON response if not found
+
+#### Example Response (Not Found)
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Address with id 99 not found in relation 'addresses'",
+    "relation": "addresses",
+    "id": 99,
+    "suggested_fix": "Verify the resource exists via GET on the 'addresses' endpoint before performing write operations on it."
+  }
+}
+```
+
+## Create Operations
+
+### createRelation
+
+Create new related entities through the relationship.
+
+```php
+public function createRelation(Request $request, mixed $parentId = null): JsonResponse
+```
+
+#### Single Mode
+
+Route: `POST /users/1/addresses`
+
+Request:
+```json
+{
+  "addresses": {
+    "street": "456 Oak Ave",
+    "city": "Chicago",
+    "is_primary": false
+  }
+}
+```
+
+Response (201):
+```json
+{
+  "success": true,
+  "model": {
+    "id": 10,
+    "street": "456 Oak Ave",
+    "city": "Chicago"
+  }
+}
+```
+
+#### Bulk Mode
+
+Set `_scenario` to any value containing "bulk":
+
+Route: `POST /users/1/addresses?_scenario=bulk_create`
+
+Request:
+```json
+{
+  "addresses": [
+    {"street": "789 Elm St", "city": "Austin"},
+    {"street": "321 Pine Rd", "city": "Denver"}
+  ]
+}
+```
+
+Response (201):
+```json
+{
+  "success": true,
+  "models": [
+    {"id": 11, "street": "789 Elm St", "city": "Austin"},
+    {"id": 12, "street": "321 Pine Rd", "city": "Denver"}
+  ]
+}
+```
+
+## Update Operations
+
+### updateRelation
+
+Update related entities.
+
+```php
+public function updateRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId = null, 
+    mixed $relatedId = null
+): JsonResponse
+```
+
+#### Single Mode
+
+Route: `PUT /users/1/addresses/5`
+
+Request:
+```json
+{
+  "street": "Updated Street",
+  "city": "New City"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "model": {
+    "id": 5,
+    "street": "Updated Street",
+    "city": "New City"
+  }
+}
+```
+
+#### Bulk Mode
+
+Route: `PUT /users/1/addresses?_scenario=bulk_update`
+
+Request:
+```json
+{
+  "addresses": [
+    {"id": 5, "city": "Boston"},
+    {"id": 6, "city": "Seattle"}
+  ]
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "models": [
+    {"id": 5, "city": "Boston"},
+    {"id": 6, "city": "Seattle"}
+  ]
+}
+```
+
+## Delete Operations
+
+### deleteRelation
+
+Delete related entities and optionally detach pivot.
+
+```php
+public function deleteRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId = null, 
+    mixed $relatedId = null
+): JsonResponse
+```
+
+#### Configuration
+
+```php
+'mutation' => [
+    'deleteRelated' => true,  // Delete model + detach pivot
+    // OR
+    'deleteRelated' => false, // Only detach pivot (keep model)
+]
+```
+
+#### Single Mode
+
+Route: `DELETE /users/1/addresses/5`
+
+Response:
+```json
+{
+  "success": true,
+  "model": {
+    "id": 5,
+    "street": "123 Main St"
+  }
+}
+```
+
+#### Bulk Mode
+
+Route: `DELETE /users/1/addresses?_scenario=bulk_delete`
+
+Request:
+```json
+{
+  "address_ids": [5, 6, 7]
+}
+```
+
+Or flat array:
+```json
+[5, 6, 7]
+```
+
+Response:
+```json
+{
+  "success": true,
+  "models": [
+    {"id": 5},
+    {"id": 6},
+    {"id": 7}
+  ]
+}
+```
+
+## Attach/Detach Operations
+
+### attachRelation
+
+Attach existing related entities (pivot-only operation).
+
+```php
+public function attachRelation(Request $request, mixed $parentId = null): JsonResponse
+```
+
+#### Scenarios
+
+1. **attach** - Single ID with optional pivot data
+2. **bulk_attach** - Multiple IDs with optional pivot data
+3. **sync** - Replace entire relationship set
+4. **toggle** - Toggle specific IDs
+
+#### Single Attach
+
+Route: `POST /users/1/addresses/attach?_scenario=attach`
+
+Request:
+```json
+{
+  "address_id": 10,
+  "is_primary": true,
+  "label": "Work"
+}
+```
+
+Response:
+```json
+{
+  "attached": [10]
+}
+```
+
+#### Bulk Attach
+
+Route: `POST /users/1/addresses/attach?_scenario=bulk_attach`
+
+Request (with pivot data):
+```json
+{
+  "addresses": [
+    {"address_id": 11, "is_primary": false, "label": "Home"},
+    {"address_id": 12, "is_primary": false, "label": "Office"}
+  ]
+}
+```
+
+Or flat IDs:
+```json
+{
+  "addresses": [11, 12, 13]
+}
+```
+
+Response:
+```json
+{
+  "attached": [11, 12, 13]
+}
+```
+
+#### Sync
+
+Replaces all associations:
+
+Route: `POST /users/1/addresses/attach?_scenario=sync`
+
+Request:
+```json
+{
+  "addresses": [
+    {"address_id": 5, "is_primary": true},
+    {"address_id": 8, "is_primary": false}
+  ]
+}
+```
+
+Response:
+```json
+{
+  "attached": [8],
+  "detached": [6, 7],
+  "updated": [5]
+}
+```
+
+#### Toggle
+
+Attach if not present, detach if present:
+
+Route: `POST /users/1/addresses/attach?_scenario=toggle`
+
+Request:
+```json
+{
+  "addresses": [5, 10, 15]
+}
+```
+
+Response:
+```json
+{
+  "attached": [10],
+  "detached": [5, 15]
+}
+```
+
+### detachRelation
+
+Detach related entities (pivot-only removal).
+
+```php
+public function detachRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId = null, 
+    mixed $relatedId = null
+): JsonResponse
+```
+
+#### Single Detach
+
+Route: `DELETE /users/1/addresses/5/detach`
+
+Response:
+```json
+{
+  "detached": 1
+}
+```
+
+#### Bulk Detach
+
+Route: `DELETE /users/1/addresses/detach?_scenario=bulk_detach`
+
+Request:
+```json
+[5, 6, 7]
+```
+
+Response:
+```json
+{
+  "detached": 3
+}
+```
+
+### updatePivotRelation
+
+Update pivot table fields without modifying related model.
+
+```php
+public function updatePivotRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId = null, 
+    mixed $relatedId = null
+): JsonResponse
+```
+
+#### Single Mode
+
+Route: `PUT /users/1/addresses/5/pivot`
+
+Request:
+```json
+{
+  "is_primary": true,
+  "label": "Primary Address"
+}
+```
+
+Response:
+```json
+{
+  "id": 5,
+  "street": "123 Main St",
+  "pivot": {
+    "is_primary": true,
+    "label": "Primary Address"
+  }
+}
+```
+
+#### Bulk Mode
+
+Route: `PUT /users/1/addresses/pivot?_scenario=bulk_update_pivot`
+
+Request:
+```json
+{
+  "addresses": [
+    {"address_id": 5, "is_primary": true},
+    {"address_id": 6, "is_primary": false}
+  ]
+}
+```
+
+## Export Operations
+
+### exportRelationExcel
+
+Export related data to Excel.
+
+```php
+public function exportRelationExcel(Request $request, mixed $parentId = null): mixed
+```
+
+#### Parameters
+
+- `filename` (string) - Output filename (default: `'export.xlsx'`)
+- `columns` (array|CSV) - Explicit columns for spreadsheet
+- `select`, `eq`, `oper`, `orderby`, `relations` - Same as `listRelation`
+
+#### Example
+
+```http
+GET /users/1/addresses/export/excel?filename=user-addresses.xlsx&columns=street,city,postal_code
+```
+
+**Requires**: `maatwebsite/excel` package
+
+### exportRelationPdf
+
+Export related data to PDF.
+
+```php
+public function exportRelationPdf(Request $request, mixed $parentId = null): mixed
+```
+
+#### Parameters
+
+- `filename` (string) - Output filename (default: `'export.pdf'`)
+- `template` (string) - Blade view name (default: `'pdf'`)
+- `columns`, `select`, `eq`, `oper`, `orderby`, `relations` - Same as `listRelation`
+
+#### Example
+
+```http
+GET /users/1/addresses/export/pdf?filename=addresses.pdf&template=reports.address
+```
+
+**Requires**: `barryvdh/laravel-dompdf` package
+
+## Pivot Data Handling
+
+The trait supports three input shapes for pivot data:
+
+### Shape 1: Flat ID List
+
+```json
+[1, 2, 3]
+```
+
+Normalized to:
+```php
+[1 => [], 2 => [], 3 => []]
+```
+
+### Shape 2: Object List
+
+```json
+[
+  {"address_id": 1, "is_primary": true, "label": "Home"},
+  {"address_id": 2, "is_primary": false, "label": "Work"}
+]
+```
+
+Normalized to:
+```php
+[
+  1 => ["is_primary" => true, "label" => "Home"],
+  2 => ["is_primary" => false, "label" => "Work"]
+]
+```
+
+### Shape 3: Laravel-Native Map
+
+```json
+{
+  "1": {"is_primary": true},
+  "2": {"is_primary": false}
+}
+```
+
+Passed through unchanged.
+
+### Pivot Column Whitelist
+
+```php
+'mutation' => [
+    'pivotColumns' => ['is_primary', 'label', 'order'],
+]
+```
+
+Only these columns are accepted. Others are silently ignored.
+
+## Error Handling
+
+### Not Found (Single)
+
+Returns 404 JSON:
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Address with id 99 not found in relation 'addresses'",
+    "relation": "addresses",
+    "id": 99,
+    "suggested_fix": "Verify the resource exists via GET on the 'addresses' endpoint before performing write operations on it."
+  }
+}
+```
+
+### Not Found (Bulk)
+
+Partial success with error details:
+
+```json
+{
+  "success": false,
+  "models": [
+    {"id": 5, "street": "Found Address"}
+  ],
+  "error": {
+    "message": "2 Address record(s) not found in relation 'addresses': [99, 100]",
+    "relation": "addresses",
+    "not_found_ids": [99, 100],
+    "suggested_fix": "Fetch the current list via GET on the 'addresses' endpoint to obtain valid IDs, then retry with only the existing records."
+  }
+}
+```
+
+### Relation Not Configured
+
+```php
+// Throws BadRequestHttpException
+"Many-to-many relation 'invalid' is not configured on UserController"
+```
+
+### Parent Not Found
+
+```php
+// Throws NotFoundHttpException
+"User with id 9999 not found"
+```
+
+## Query Optimization
+
+The trait implements several optimizations:
+
+1. **Batch loading**: Bulk operations load all entities in one query
+2. **Batch updates**: Uses single `detach()`/`delete()` for multiple IDs
+3. **Batch refresh**: Refreshes all updated entities in one query
+4. **Minimal queries**: Typical bulk update = 3 queries (load, N updates, refresh)
+
+## Related Documentation
+
+- [ManagesOneToMany Trait](/api/traits/manages-one-to-many) - One-to-many operations
+- [Relation Loading](/core/relations) - Eager-loading relations
+- [Many-to-Many Guide](/guides/many-to-many) - Detailed usage guide
+- [Bulk Operations Guide](/guides/bulk-operations) - Bulk CRUD examples

@@ -1,0 +1,562 @@
+---
+title: "Basic CRUD Operations"
+description: "Learn the fundamentals of creating, reading, updating, and deleting records with Rest Generic Class"
+---
+
+This guide covers the essential CRUD operations that form the foundation of working with Rest Generic Class. You'll learn how to set up your models, services, and controllers, then perform basic operations through the REST API.
+
+## Quick Setup
+
+<Steps>
+
+### Define Your Model
+
+Extend `BaseModel` and define the model constant and allowed relations:
+
+```php Product.php
+<?php
+
+namespace App\Models;
+
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $fillable = ['name', 'price', 'stock', 'category_id'];
+
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews'];
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+}
+```
+
+<Note>
+  The `RELATIONS` constant is a security whitelist. Only relations listed here can be eager-loaded through the API.
+</Note>
+
+### Create Your Service
+
+Extend `BaseService` and pass your model class:
+
+```php ProductService.php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+}
+```
+
+### Build Your Controller
+
+Extend `RestController` and inject your service:
+
+```php ProductController.php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Models\Product;
+use App\Services\ProductService;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    protected $modelClass = Product::class;
+
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+}
+```
+
+### Register Your Routes
+
+```php routes/api.php
+use App\Http\Controllers\Api\ProductController;
+
+Route::prefix('v1')->group(function () {
+    Route::apiResource('products', ProductController::class);
+    Route::post('products/update-multiple', [ProductController::class, 'updateMultiple']);
+});
+```
+
+</Steps>
+
+## Listing Records
+
+### Simple List
+
+Get all products:
+
+```http
+GET /api/v1/products
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "price": 29.99,
+      "stock": 150,
+      "category_id": 3
+    },
+    {
+      "id": 2,
+      "name": "USB-C Cable",
+      "price": 12.99,
+      "stock": 500,
+      "category_id": 4
+    }
+  ]
+}
+```
+
+### Select Specific Fields
+
+Reduce payload size by selecting only needed fields:
+
+```http
+GET /api/v1/products?select=["id","name","price"]
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "price": 29.99
+    },
+    {
+      "id": 2,
+      "name": "USB-C Cable",
+      "price": 12.99
+    }
+  ]
+}
+```
+
+### Load Relations
+
+Eager-load related data to avoid N+1 queries:
+
+```http
+GET /api/v1/products?relations=["category:id,name"]
+```
+
+<Note>
+  The `:id,name` syntax selects only specific fields from the relation. Always include foreign keys to maintain relationships.
+</Note>
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "price": 29.99,
+      "stock": 150,
+      "category_id": 3,
+      "category": {
+        "id": 3,
+        "name": "Peripherals"
+      }
+    }
+  ]
+}
+```
+
+## Filtering
+
+### Equality Filters (Legacy)
+
+Filter by exact matches using the `attr` parameter:
+
+```json
+{
+  "attr": {
+    "category_id": 3,
+    "status": "active"
+  }
+}
+```
+
+### Dynamic Filters with `oper`
+
+Use the powerful `oper` parameter for complex conditions:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50",
+      "price|<=|200"
+    ]
+  }
+}
+```
+
+**Supported operators:**
+- Comparison: `=`, `!=`, `<`, `>`, `<=`, `>=`
+- Pattern matching: `like`, `not like`, `ilike`, `not ilike`
+- Set operations: `in`, `not in`
+- Range: `between`, `not between`
+- Null checks: `null`, `not null`
+- Date: `date`, `not date`
+
+### Combining AND and OR
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active"
+    ],
+    "or": [
+      "category_id|=|3",
+      "category_id|=|4"
+    ]
+  }
+}
+```
+
+## Sorting
+
+Order results by one or more fields:
+
+```json
+{
+  "orderby": [
+    {"price": "desc"},
+    {"name": "asc"}
+  ]
+}
+```
+
+## Pagination
+
+### Standard Pagination
+
+```json
+{
+  "pagination": {
+    "page": 1,
+    "pageSize": 25
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "current_page": 1,
+  "data": [...],
+  "first_page_url": "http://api.example.com/products?page=1",
+  "from": 1,
+  "last_page": 4,
+  "last_page_url": "http://api.example.com/products?page=4",
+  "next_page_url": "http://api.example.com/products?page=2",
+  "path": "http://api.example.com/products",
+  "per_page": 25,
+  "prev_page_url": null,
+  "to": 25,
+  "total": 100
+}
+```
+
+## Creating Records
+
+### Single Record
+
+```http
+POST /api/v1/products
+Content-Type: application/json
+
+{
+  "name": "Mechanical Keyboard",
+  "price": 89.99,
+  "stock": 50,
+  "category_id": 3
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 10,
+    "name": "Mechanical Keyboard",
+    "price": 89.99,
+    "stock": 50,
+    "category_id": 3,
+    "created_at": "2026-03-05T10:30:00.000000Z",
+    "updated_at": "2026-03-05T10:30:00.000000Z"
+  }
+}
+```
+
+### Bulk Create
+
+Create multiple records in one request:
+
+```http
+POST /api/v1/products
+Content-Type: application/json
+
+{
+  "product": [
+    {
+      "name": "Mouse Pad",
+      "price": 9.99,
+      "stock": 200,
+      "category_id": 3
+    },
+    {
+      "name": "Webcam",
+      "price": 49.99,
+      "stock": 75,
+      "category_id": 3
+    }
+  ]
+}
+```
+
+<Note>
+  The key must match the lowercase `MODEL` constant defined in your model (`product` in this example).
+</Note>
+
+## Updating Records
+
+### Single Update
+
+```http
+PUT /api/v1/products/10
+Content-Type: application/json
+
+{
+  "price": 79.99,
+  "stock": 45
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 10,
+    "name": "Mechanical Keyboard",
+    "price": 79.99,
+    "stock": 45,
+    "category_id": 3,
+    "created_at": "2026-03-05T10:30:00.000000Z",
+    "updated_at": "2026-03-05T11:15:00.000000Z"
+  }
+}
+```
+
+### Bulk Update
+
+Update multiple records at once:
+
+```http
+POST /api/v1/products/update-multiple
+Content-Type: application/json
+
+{
+  "product": [
+    {"id": 10, "stock": 40},
+    {"id": 11, "stock": 0},
+    {"id": 12, "price": 14.99}
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "models": [
+    {
+      "success": true,
+      "model": {"id": 10, "stock": 40, ...}
+    },
+    {
+      "success": true,
+      "model": {"id": 11, "stock": 0, ...}
+    },
+    {
+      "success": true,
+      "model": {"id": 12, "price": 14.99, ...}
+    }
+  ]
+}
+```
+
+<Warning>
+  All updates in `updateMultiple` are wrapped in a transaction. If validation fails on any record, the entire transaction rolls back.
+</Warning>
+
+## Deleting Records
+
+### Delete by ID
+
+```http
+DELETE /api/v1/products/10
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 10,
+    "name": "Mechanical Keyboard",
+    ...
+  }
+}
+```
+
+## Showing a Single Record
+
+Retrieve a single record with optional relations:
+
+```http
+GET /api/v1/products/10?relations=["category","reviews"]
+```
+
+Response:
+
+```json
+{
+  "id": 10,
+  "name": "Mechanical Keyboard",
+  "price": 79.99,
+  "stock": 40,
+  "category_id": 3,
+  "category": {
+    "id": 3,
+    "name": "Peripherals"
+  },
+  "reviews": [
+    {
+      "id": 1,
+      "rating": 5,
+      "comment": "Excellent keyboard!"
+    }
+  ]
+}
+```
+
+## Common Patterns
+
+### Filtered List with Relations
+
+Combine filtering, selection, and relation loading:
+
+```http
+GET /api/v1/products?select=["id","name","price"]&relations=["category:id,name"]
+```
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active", "price|>=|20"]
+  },
+  "orderby": [{"price": "asc"}],
+  "pagination": {
+    "page": 1,
+    "pageSize": 10
+  }
+}
+```
+
+### Search by Name
+
+Use the `like` operator for text search:
+
+```json
+{
+  "oper": {
+    "and": ["name|like|%keyboard%"]
+  }
+}
+```
+
+### Get Active Products in Price Range
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|between|50,200"
+    ]
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Filtering" icon="filter" href="/guides/advanced-filtering">
+    Learn complex filtering with nested relations and multiple conditions
+  </Card>
+  <Card title="Relation Loading" icon="link" href="/guides/relation-loading">
+    Master eager loading and nested relation queries
+  </Card>
+  <Card title="Caching" icon="bolt" href="/guides/caching">
+    Configure Redis, database, or file-based caching for better performance
+  </Card>
+  <Card title="Bulk Operations" icon="layer-group" href="/guides/bulk-operations">
+    Optimize multiple record operations with bulk endpoints
+  </Card>
+</CardGroup>
+
+## Evidence
+
+- **File:** `src/Core/Controllers/RestController.php`  
+  **Lines:** 79-102, 110-121, 158-176, 186-203, 211-230, 239-243, 251-268  
+  Shows the request parameter extraction and CRUD endpoints (index, store, update, updateMultiple, show, destroy)
+
+- **File:** `src/Core/Services/BaseService.php`  
+  **Lines:** 414-423, 611-627, 645-662, 664-676, 1057-1069, 1071-1079  
+  Implements list_all, create, update, update_multiple, destroy, and destroybyid methods
+
+- **File:** `src/Core/Models/BaseModel.php`  
+  **Lines:** 28-44  
+  Shows MODEL and RELATIONS constants used for configuration

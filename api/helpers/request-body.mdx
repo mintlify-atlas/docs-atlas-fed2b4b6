@@ -1,0 +1,520 @@
+---
+title: RequestBody
+description: Extract and manipulate parameters from request body supporting JSON, form-data, multipart, and any HTTP method
+---
+
+## Overview
+
+The `RequestBody` helper extracts and manipulates parameters from a Laravel Request body. It supports JSON, form-data, multipart, raw body content, and works with **any HTTP method** (GET, POST, PUT, PATCH, DELETE, etc.). It excludes query parameters and route parameters by default.
+
+## Class Reference
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\RequestBody;
+```
+
+## Methods
+
+### get()
+
+Extract parameters from request body without query params or route params.
+
+```php
+public static function get(
+    Request $request,
+    string|array|null $keys = null,
+    array $options = []
+): mixed
+```
+
+<ParamField path="request" type="Request" required>
+  The Laravel Request instance
+</ParamField>
+
+<ParamField path="keys" type="string|array|null" default="null">
+  - `null`: Return all body parameters
+  - `string`: Return single parameter (supports dot notation)
+  - `array`: Return multiple parameters
+</ParamField>
+
+<ParamField path="options" type="array" default="[]">
+  Configuration options:
+  
+  <Expandable title="Available Options">
+    <ParamField path="default" type="mixed" default="null">
+      Default value when key not found
+    </ParamField>
+    
+    <ParamField path="only" type="array|null" default="null">
+      Only include specified keys
+    </ParamField>
+    
+    <ParamField path="except" type="array" default="[]">
+      Exclude specified keys
+    </ParamField>
+    
+    <ParamField path="trim_strings" type="bool" default="true">
+      Trim whitespace from string values
+    </ParamField>
+    
+    <ParamField path="empty_to_null" type="bool" default="false">
+      Convert empty strings to null
+    </ParamField>
+    
+    <ParamField path="drop_internal" type="bool" default="true">
+      Remove Laravel internal fields (_token, _method)
+    </ParamField>
+    
+    <ParamField path="casts" type="array" default="[]">
+      Type casting rules (e.g., ['age' => 'int', 'active' => 'bool'])
+    </ParamField>
+    
+    <ParamField path="strict" type="bool" default="false">
+      Throw exception if required keys are missing
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="return" type="mixed">
+  - Returns `array` when keys is null or array
+  - Returns `mixed` when keys is a string
+</ResponseField>
+
+#### Example Usage
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\RequestBody;
+
+// Get all body parameters
+$body = RequestBody::get($request);
+// ['name' => 'John', 'email' => 'john@example.com']
+
+// Get single parameter
+$email = RequestBody::get($request, 'email');
+// 'john@example.com'
+
+// Get nested parameter with dot notation
+$city = RequestBody::get($request, 'user.address.city');
+// 'New York'
+
+// Get multiple parameters
+$data = RequestBody::get($request, ['name', 'email']);
+// ['name' => 'John', 'email' => 'john@example.com']
+
+// With default value
+$phone = RequestBody::get($request, 'phone', ['default' => 'N/A']);
+// 'N/A' (if phone not in body)
+
+// With type casting
+$age = RequestBody::get($request, 'age', ['casts' => ['age' => 'int']]);
+// 25 (as integer)
+```
+
+---
+
+### all()
+
+Explicit alias to get all parameters from request body.
+
+```php
+public static function all(Request $request, array $options = []): array
+```
+
+<ParamField path="request" type="Request" required>
+  The Laravel Request instance
+</ParamField>
+
+<ParamField path="options" type="array" default="[]">
+  Configuration options (same as `get()` method)
+</ParamField>
+
+<ResponseField name="return" type="array">
+  All body parameters as an associative array
+</ResponseField>
+
+#### Example Usage
+
+```php
+$body = RequestBody::all($request);
+// ['name' => 'John', 'email' => 'john@example.com', 'age' => '25']
+
+// With trimming and empty to null
+$body = RequestBody::all($request, [
+    'trim_strings' => true,
+    'empty_to_null' => true,
+]);
+```
+
+---
+
+### only()
+
+Get a single parameter with default value.
+
+```php
+public static function only(
+    Request $request,
+    string $key,
+    mixed $default = null,
+    array $options = []
+): mixed
+```
+
+<ParamField path="request" type="Request" required>
+  The Laravel Request instance
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  The parameter key (supports dot notation)
+</ParamField>
+
+<ParamField path="default" type="mixed" default="null">
+  Default value if key not found
+</ParamField>
+
+<ParamField path="options" type="array" default="[]">
+  Additional configuration options
+</ParamField>
+
+<ResponseField name="return" type="mixed">
+  The parameter value or default
+</ResponseField>
+
+#### Example Usage
+
+```php
+$email = RequestBody::only($request, 'email', 'no-email@example.com');
+// 'john@example.com' or 'no-email@example.com' if not found
+
+$status = RequestBody::only($request, 'status', 'pending', [
+    'casts' => ['status' => 'string']
+]);
+```
+
+---
+
+### pick()
+
+Get multiple specific parameters.
+
+```php
+public static function pick(
+    Request $request,
+    array $keys,
+    array $options = []
+): array
+```
+
+<ParamField path="request" type="Request" required>
+  The Laravel Request instance
+</ParamField>
+
+<ParamField path="keys" type="array" required>
+  Array of keys to extract (supports dot notation)
+</ParamField>
+
+<ParamField path="options" type="array" default="[]">
+  Configuration options
+</ParamField>
+
+<ResponseField name="return" type="array">
+  Associative array with only specified keys
+</ResponseField>
+
+#### Example Usage
+
+```php
+$data = RequestBody::pick($request, ['name', 'email', 'phone']);
+// ['name' => 'John', 'email' => 'john@example.com', 'phone' => '555-1234']
+
+// With nested keys
+$data = RequestBody::pick($request, [
+    'user.name',
+    'user.email',
+    'settings.theme'
+]);
+```
+
+---
+
+### require()
+
+Validate that required keys exist and return them (throws exception if missing).
+
+```php
+public static function require(
+    Request $request,
+    array $requiredKeys,
+    array $options = []
+): array
+```
+
+<ParamField path="request" type="Request" required>
+  The Laravel Request instance
+</ParamField>
+
+<ParamField path="requiredKeys" type="array" required>
+  Array of required keys (supports dot notation)
+</ParamField>
+
+<ParamField path="options" type="array" default="[]">
+  Configuration options
+</ParamField>
+
+<ResponseField name="return" type="array">
+  Associative array with required keys
+</ResponseField>
+
+<ResponseField name="throws" type="\InvalidArgumentException">
+  Thrown when one or more required keys are missing
+</ResponseField>
+
+#### Example Usage
+
+```php
+try {
+    $data = RequestBody::require($request, ['name', 'email', 'password']);
+    // ['name' => 'John', 'email' => 'john@example.com', 'password' => 'secret']
+    
+    User::create($data);
+    
+} catch (\InvalidArgumentException $e) {
+    // Exception message: "Missing required body parameters: password"
+    return response()->json(['error' => $e->getMessage()], 422);
+}
+```
+
+---
+
+## Type Casting
+
+The `casts` option supports automatic type conversion:
+
+### Supported Cast Types
+
+<ParamField path="int, integer" type="cast">
+  Convert to integer
+</ParamField>
+
+<ParamField path="float, double, decimal" type="cast">
+  Convert to float
+</ParamField>
+
+<ParamField path="bool, boolean" type="cast">
+  Convert to boolean
+</ParamField>
+
+<ParamField path="string" type="cast">
+  Convert to string
+</ParamField>
+
+<ParamField path="array" type="cast">
+  Convert to array
+</ParamField>
+
+<ParamField path="json" type="cast">
+  Parse JSON string to array
+</ParamField>
+
+<ParamField path="date" type="cast">
+  Convert to Carbon date instance
+</ParamField>
+
+<ParamField path="date:format" type="cast">
+  Convert to Carbon using specific format (e.g., `date:Y-m-d`)
+</ParamField>
+
+<ParamField path="callable" type="cast">
+  Custom transformation function
+</ParamField>
+
+### Type Casting Examples
+
+```php
+$data = RequestBody::get($request, null, [
+    'casts' => [
+        'age' => 'int',
+        'price' => 'float',
+        'active' => 'bool',
+        'tags' => 'array',
+        'metadata' => 'json',
+        'birth_date' => 'date:Y-m-d',
+        'created_at' => 'date',
+        'name' => fn($v) => strtoupper($v), // Custom cast
+    ]
+]);
+
+// Input body:
+// {
+//   "age": "25",
+//   "price": "19.99",
+//   "active": "true",
+//   "tags": "tag1,tag2",
+//   "metadata": "{\"key\":\"value\"}",
+//   "birth_date": "1998-05-15",
+//   "created_at": "2024-01-15 10:30:00",
+//   "name": "john"
+// }
+
+// Result:
+// [
+//   'age' => 25,                           // int
+//   'price' => 19.99,                      // float
+//   'active' => true,                      // bool
+//   'tags' => ['tag1', 'tag2'],            // array
+//   'metadata' => ['key' => 'value'],      // decoded JSON
+//   'birth_date' => Carbon instance,       // Carbon date
+//   'created_at' => Carbon instance,       // Carbon date
+//   'name' => 'JOHN'                       // custom cast
+// ]
+```
+
+---
+
+## Filtering Options
+
+### Only Specific Keys
+
+```php
+$body = RequestBody::get($request, null, [
+    'only' => ['name', 'email', 'phone']
+]);
+// Only includes name, email, and phone (ignores all others)
+```
+
+### Exclude Keys
+
+```php
+$body = RequestBody::get($request, null, [
+    'except' => ['password', 'secret_key']
+]);
+// Includes everything except password and secret_key
+```
+
+### Drop Internal Fields
+
+```php
+// By default, _token and _method are removed
+$body = RequestBody::get($request);
+
+// To keep internal fields:
+$body = RequestBody::get($request, null, [
+    'drop_internal' => false
+]);
+```
+
+---
+
+## String Normalization
+
+### Trim Strings
+
+```php
+$body = RequestBody::get($request, null, [
+    'trim_strings' => true  // Default
+]);
+// '  John  ' becomes 'John'
+```
+
+### Empty to Null
+
+```php
+$body = RequestBody::get($request, null, [
+    'empty_to_null' => true
+]);
+// '' (empty string) becomes null
+```
+
+---
+
+## Supported Content Types
+
+### JSON (application/json)
+
+```php
+// POST /api/users
+// Content-Type: application/json
+// {"name": "John", "email": "john@example.com"}
+
+$body = RequestBody::get($request);
+// ['name' => 'John', 'email' => 'john@example.com']
+```
+
+### Form Data (application/x-www-form-urlencoded)
+
+```php
+// POST /api/users
+// Content-Type: application/x-www-form-urlencoded
+// name=John&email=john@example.com
+
+$body = RequestBody::get($request);
+// ['name' => 'John', 'email' => 'john@example.com']
+```
+
+### Multipart (multipart/form-data)
+
+```php
+// POST /api/users
+// Content-Type: multipart/form-data
+
+$body = RequestBody::get($request);
+// Excludes uploaded files by default
+```
+
+### Raw Content
+
+```php
+// Works with raw request body content
+// Automatically detects JSON, URL-encoded, or key=value formats
+```
+
+---
+
+## Complete Example
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\RequestBody;
+
+class UserController extends Controller
+{
+    public function store(Request $request)
+    {
+        // Extract required fields with type casting
+        try {
+            $data = RequestBody::require($request, ['name', 'email', 'age'], [
+                'casts' => [
+                    'age' => 'int',
+                    'active' => 'bool',
+                ],
+                'trim_strings' => true,
+                'empty_to_null' => true,
+            ]);
+            
+            // Create user with validated data
+            $user = User::create($data);
+            
+            return response()->json($user, 201);
+            
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'error' => 'Validation failed',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+    
+    public function update(Request $request, $id)
+    {
+        // Get only specific fields
+        $data = RequestBody::pick($request, ['name', 'email', 'bio'], [
+            'trim_strings' => true,
+            'except' => ['id', 'created_at', 'updated_at'],
+        ]);
+        
+        $user = User::findOrFail($id);
+        $user->update($data);
+        
+        return response()->json($user);
+    }
+}
+```

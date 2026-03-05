@@ -1,0 +1,658 @@
+---
+title: ManagesOneToMany Trait
+description: API reference for the ManagesOneToMany trait that provides CRUD operations for HasMany relationships
+---
+
+## Overview
+
+The `ManagesOneToMany` trait provides complete CRUD functionality for one-to-many (HasMany) relationships with support for:
+
+- Reading related records with filtering, pagination, and sorting
+- Creating related records through the relationship
+- Updating related records
+- Deleting related records
+- Bulk operations for all mutation methods
+- Excel/PDF export of related data
+
+**Namespace**: `Ronu\RestGenericClass\Core\Traits\ManagesOneToMany`
+
+**Location**: `/src/Core/Traits/ManagesOneToMany.php:32`
+
+## Configuration
+
+### Basic Setup
+
+Add the trait to your controller and define `$oneToManyConfig`:
+
+```php
+use Ronu\RestGenericClass\Core\Traits\ManagesOneToMany;
+
+class CountryController extends RestController
+{
+    use ManagesOneToMany;
+    
+    protected array $oneToManyConfig = [
+        'states' => [
+            'relationship'  => 'array_states',       // HasMany method on parent
+            'relatedModel'  => State::class,
+            'parentModel'   => Country::class,
+            'foreignKey'    => 'country_id',         // FK in related table
+            'localKey'      => 'id',                 // PK in parent table
+            
+            'mutation' => [
+                'dataKey'       => ['States', 'states'],
+                'deleteRelated' => true,
+            ],
+        ],
+    ];
+}
+```
+
+### Configuration Options
+
+#### Required
+
+- `relationship` (string) - Name of the HasMany method on the parent model
+- `relatedModel` (string) - Fully qualified class name of the related model
+- `parentModel` (string) - Parent model class name
+- `foreignKey` (string) - Foreign key column in the related table
+- `localKey` (string) - Primary key column in the parent table
+
+#### Optional (mutation)
+
+- `dataKey` (array|string) - Request keys to extract data from (default: `[]`)
+- `deleteRelated` (bool) - Delete related model on `deleteRelation` (default: `true`)
+
+## Read Operations
+
+### listRelation
+
+List related entities with filtering, pagination, and sorting.
+
+```php
+public function listRelation(Request $request, mixed $parentId = null): LengthAwarePaginator|array
+```
+
+#### Parameters
+
+- `Request $request` - HTTP request with query parameters
+- `mixed $parentId` - Parent ID (null = auth user)
+
+#### Query Parameters
+
+- `select` - Columns to select (default: `['*']`)
+- `relations` - Relations to eager-load
+- `eq`/`attr` - Equality filters
+- `oper` - Complex filters (see [Filtering](/core/filtering))
+- `orderby` - Sort order
+- `pagination` - Pagination settings
+
+#### Example
+
+```http
+GET /api/countries/1/states?select=id,name,code&orderby={"name":"asc"}&pagination={"page":1,"pageSize":20}
+```
+
+Response:
+```json
+{
+  "current_page": 1,
+  "data": [
+    {
+      "id": 5,
+      "name": "California",
+      "code": "CA"
+    },
+    {
+      "id": 12,
+      "name": "Florida",
+      "code": "FL"
+    }
+  ],
+  "per_page": 20,
+  "total": 50
+}
+```
+
+### showRelation
+
+Retrieve a single related entity.
+
+```php
+public function showRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId, 
+    mixed $relatedId = null
+): mixed
+```
+
+#### Parameters
+
+- `Request $request` - HTTP request
+- `mixed $parentIdOrRelatedId` - Parent ID (admin) or related ID (site/mobile)
+- `mixed $relatedId` - Related ID (admin only)
+
+#### Route Shapes
+
+```php
+// Site/Mobile: uses auth user as parent
+GET /states/5
+
+// Admin: explicit parent ID
+GET /countries/1/states/5
+```
+
+#### Returns
+
+- Related model instance on success
+- 404 JSON response if not found
+
+#### Example Response (Not Found)
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "State with id 99 not found in relation 'states'",
+    "relation": "states",
+    "id": 99,
+    "suggested_fix": "Verify the resource exists via GET on the 'states' endpoint before performing write operations on it."
+  }
+}
+```
+
+## Create Operations
+
+### createRelation
+
+Create new related entities through the relationship.
+
+```php
+public function createRelation(Request $request, mixed $parentId = null): JsonResponse
+```
+
+#### Single Mode
+
+Route: `POST /countries/1/states`
+
+Request:
+```json
+{
+  "states": {
+    "name": "California",
+    "code": "CA",
+    "population": 39538223
+  }
+}
+```
+
+Response (201):
+```json
+{
+  "success": true,
+  "model": {
+    "id": 51,
+    "name": "California",
+    "code": "CA",
+    "country_id": 1,
+    "population": 39538223
+  }
+}
+```
+
+#### Bulk Mode
+
+Set `_scenario` to any value containing "bulk":
+
+Route: `POST /countries/1/states?_scenario=bulk_create`
+
+Request:
+```json
+{
+  "states": [
+    {"name": "Texas", "code": "TX"},
+    {"name": "New York", "code": "NY"}
+  ]
+}
+```
+
+Response (201):
+```json
+{
+  "success": true,
+  "models": [
+    {"id": 52, "name": "Texas", "code": "TX", "country_id": 1},
+    {"id": 53, "name": "New York", "code": "NY", "country_id": 1}
+  ]
+}
+```
+
+<Note>
+The foreign key (`country_id`) is automatically set by Laravel's relationship.
+</Note>
+
+## Update Operations
+
+### updateRelation
+
+Update related entities.
+
+```php
+public function updateRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId = null, 
+    mixed $relatedId = null
+): JsonResponse
+```
+
+#### Single Mode
+
+Route: `PUT /countries/1/states/5`
+
+Request:
+```json
+{
+  "name": "California (Updated)",
+  "population": 40000000
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "model": {
+    "id": 5,
+    "name": "California (Updated)",
+    "code": "CA",
+    "population": 40000000
+  }
+}
+```
+
+#### Bulk Mode
+
+Route: `PUT /countries/1/states?_scenario=bulk_update`
+
+Request:
+```json
+{
+  "states": [
+    {"id": 5, "population": 40000000},
+    {"id": 6, "population": 29000000}
+  ]
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "models": [
+    {"id": 5, "name": "California", "population": 40000000},
+    {"id": 6, "name": "Texas", "population": 29000000}
+  ]
+}
+```
+
+#### Bulk Partial Failure
+
+If some IDs are not found:
+
+```json
+{
+  "success": false,
+  "models": [
+    {"id": 5, "name": "California"}
+  ],
+  "error": {
+    "message": "2 State record(s) not found in relation 'states': [99, 100]",
+    "relation": "states",
+    "not_found_ids": [99, 100],
+    "suggested_fix": "Fetch the current list via GET on the 'states' endpoint to obtain valid IDs, then retry with only the existing records."
+  }
+}
+```
+
+## Delete Operations
+
+### deleteRelation
+
+Delete related entities.
+
+```php
+public function deleteRelation(
+    Request $request, 
+    mixed $parentIdOrRelatedId = null, 
+    mixed $relatedId = null
+): JsonResponse
+```
+
+#### Configuration
+
+```php
+'mutation' => [
+    'deleteRelated' => true,  // Delete the model (default)
+    // OR
+    'deleteRelated' => false, // Do nothing (for soft deletes or custom logic)
+]
+```
+
+#### Single Mode
+
+Route: `DELETE /countries/1/states/5`
+
+Response:
+```json
+{
+  "success": true,
+  "model": {
+    "id": 5,
+    "name": "California"
+  }
+}
+```
+
+#### Bulk Mode
+
+Route: `DELETE /countries/1/states?_scenario=bulk_delete`
+
+Request:
+```json
+[5, 6, 7]
+```
+
+Response:
+```json
+{
+  "success": true,
+  "models": [
+    {"id": 5, "name": "California"},
+    {"id": 6, "name": "Texas"},
+    {"id": 7, "name": "Florida"}
+  ]
+}
+```
+
+<Warning>
+If `deleteRelated` is `true`, related records are permanently deleted. Use soft deletes if you need to recover them.
+</Warning>
+
+## Export Operations
+
+### exportRelationExcel
+
+Export related data to Excel.
+
+```php
+public function exportRelationExcel(Request $request, mixed $parentId = null): mixed
+```
+
+#### Parameters
+
+- `filename` (string) - Output filename (default: `'export.xlsx'`)
+- `columns` (array|CSV) - Explicit columns for spreadsheet
+- `select`, `eq`, `oper`, `orderby`, `relations` - Same as `listRelation`
+
+#### Example
+
+```http
+GET /countries/1/states/export/excel?filename=us-states.xlsx&columns=name,code,population
+```
+
+**Requires**: `maatwebsite/excel` package
+
+### exportRelationPdf
+
+Export related data to PDF.
+
+```php
+public function exportRelationPdf(Request $request, mixed $parentId = null): mixed
+```
+
+#### Parameters
+
+- `filename` (string) - Output filename (default: `'export.pdf'`)
+- `template` (string) - Blade view name (default: `'pdf'`)
+- `columns`, `select`, `eq`, `oper`, `orderby`, `relations` - Same as `listRelation`
+
+#### Example
+
+```http
+GET /countries/1/states/export/pdf?filename=states.pdf&template=reports.state
+```
+
+**Requires**: `barryvdh/laravel-dompdf` package
+
+## Internal Methods
+
+### resolveRelationConfig (Protected)
+
+Resolves relation configuration from `$oneToManyConfig`.
+
+```php
+protected function resolveRelationConfig(?string $relationName): array
+```
+
+#### Throws
+`BadRequestHttpException` if relation is not configured
+
+### resolveParentEntity (Protected)
+
+Resolves parent entity from ID or auth user.
+
+```php
+protected function resolveParentEntity(array $config, mixed $parentId): mixed
+```
+
+#### Throws
+`NotFoundHttpException` if parent is not found or auth user is missing
+
+### extractMutationData (Protected)
+
+Extracts mutation data from request body using `dataKey` configuration.
+
+```php
+protected function extractMutationData(Request $request, array $config): array
+```
+
+### executeMutation (Protected)
+
+Wraps mutation operations in a database transaction with error logging.
+
+```php
+protected function executeMutation(
+    Request $request, 
+    callable $operation, 
+    int $status = 200
+): JsonResponse
+```
+
+#### Parameters
+
+- `Request $request` - HTTP request
+- `callable $operation` - Closure containing mutation logic
+- `int $status` - HTTP status code on success (default: 200, use 201 for create)
+
+#### Returns
+
+`JsonResponse` - Operation result or error response
+
+### isBulkScenario (Protected)
+
+Checks if the current request is a bulk operation.
+
+```php
+protected function isBulkScenario(Request $request): bool
+```
+
+Returns `true` if `_scenario` contains "bulk".
+
+## Query Application Methods
+
+### applyOneToManyEqFilters (Protected)
+
+Applies equality filters to the query.
+
+```php
+protected function applyOneToManyEqFilters(HasMany $query, array $eq): void
+```
+
+### applyOneToManyOperFilters (Protected)
+
+Applies complex operator-based filters.
+
+```php
+protected function applyOneToManyOperFilters(HasMany $query, array $oper): void
+```
+
+### applyOneToManyOrdering (Protected)
+
+Applies ordering to the query.
+
+```php
+protected function applyOneToManyOrdering(HasMany $query, array $orderby): void
+```
+
+### applyOneToManySingleCondition (Protected)
+
+Parses and applies a single filter condition.
+
+```php
+protected function applyOneToManySingleCondition(
+    $query, 
+    string $condition, 
+    string $boolean
+): void
+```
+
+Supports operators: `=`, `!=`, `<`, `>`, `<=`, `>=`, `like`, `not like`, `ilike`, `not ilike`, `in`, `not in`, `between`, `not between`, `null`, `not null`.
+
+## Error Handling
+
+### Not Found (Single)
+
+Returns 404 JSON:
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "State with id 99 not found in relation 'states'",
+    "relation": "states",
+    "id": 99,
+    "suggested_fix": "Verify the resource exists via GET on the 'states' endpoint before performing write operations on it."
+  }
+}
+```
+
+### Not Found (Bulk)
+
+Partial success with error details:
+
+```json
+{
+  "success": false,
+  "models": [
+    {"id": 5, "name": "Found State"}
+  ],
+  "error": {
+    "message": "2 State record(s) not found in relation 'states': [99, 100]",
+    "relation": "states",
+    "not_found_ids": [99, 100],
+    "suggested_fix": "Fetch the current list via GET on the 'states' endpoint to obtain valid IDs, then retry with only the existing records."
+  }
+}
+```
+
+### Relation Not Configured
+
+```php
+// Throws BadRequestHttpException
+"One-to-many relation 'invalid' is not configured on CountryController"
+```
+
+### Parent Not Found
+
+```php
+// Throws NotFoundHttpException
+"Country with id 9999 not found"
+```
+
+### Transaction Rollback
+
+On any exception during mutation, the transaction is rolled back and the error is logged:
+
+```php
+Log::error('O2M mutation failed on states relation', [
+    'controller' => 'CountryController',
+    'scenario' => 'bulk_update',
+    'exception' => $e,
+]);
+```
+
+## Query Optimization
+
+The trait implements several optimizations:
+
+1. **Batch loading**: Bulk operations load all entities in one query
+2. **Batch deletes**: Uses single `whereIn()->delete()` for multiple IDs
+3. **Batch refresh**: Refreshes all updated entities in one query
+4. **Minimal queries**: Typical bulk update = 3 queries (load, N updates, refresh)
+
+## Performance Considerations
+
+1. **Use bulk operations** when updating multiple records
+2. **Eager-load relations** to avoid N+1 queries
+3. **Select only needed fields** to reduce data transfer
+4. **Add database indexes** on foreign keys
+5. **Paginate large result sets** to avoid memory issues
+
+## Example Controller
+
+Complete example:
+
+```php
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+use Ronu\RestGenericClass\Core\Traits\ManagesOneToMany;
+
+class CompanyController extends RestController
+{
+    use ManagesOneToMany;
+    
+    protected array $oneToManyConfig = [
+        'employees' => [
+            'relationship'  => 'employees',
+            'relatedModel'  => Employee::class,
+            'parentModel'   => Company::class,
+            'foreignKey'    => 'company_id',
+            'localKey'      => 'id',
+            
+            'mutation' => [
+                'dataKey'       => ['Employees', 'employees'],
+                'deleteRelated' => true,
+            ],
+        ],
+    ];
+}
+```
+
+Routes:
+
+```php
+// In routes/api.php
+Route::middleware(['auth:api', 'inject:_relation=employees'])->group(function () {
+    Route::get('companies/{company}/employees', [CompanyController::class, 'listRelation']);
+    Route::get('companies/{company}/employees/{employee}', [CompanyController::class, 'showRelation']);
+    Route::post('companies/{company}/employees', [CompanyController::class, 'createRelation']);
+    Route::put('companies/{company}/employees/{employee}', [CompanyController::class, 'updateRelation']);
+    Route::delete('companies/{company}/employees/{employee}', [CompanyController::class, 'deleteRelation']);
+});
+```
+
+## Related Documentation
+
+- [ManagesManyToMany Trait](/api/traits/manages-many-to-many) - Many-to-many operations
+- [Relation Loading](/core/relations) - Eager-loading relations
+- [Dynamic Filtering](/core/filtering) - Filter related data
+- [Bulk Operations Guide](/guides/bulk-operations) - Bulk CRUD examples

@@ -1,0 +1,143 @@
+---
+title: "System Requirements"
+description: "Prerequisites for installing Rest Generic Class Laravel package"
+---
+
+## Runtime Requirements
+
+Before installing the Rest Generic Class package, ensure your environment meets these minimum requirements:
+
+### PHP Version
+
+- **PHP 8.0 or higher** is required
+- The package leverages modern PHP features including typed properties, union types, and attributes
+
+<Note>
+  PHP 8.1 or 8.2 is recommended for optimal performance and security updates.
+</Note>
+
+### Laravel Framework
+
+- **Laravel 12.0 or higher** is required
+- The package depends on these Laravel components:
+  - `illuminate/database` ^12.0
+  - `illuminate/http` ^12.0
+  - `illuminate/pagination` ^12.0
+  - `illuminate/mail` ^12.0
+  - `illuminate/support` ^12.0
+  - `illuminate/validation` ^12.0
+  - `laravel/framework` ^12.51
+
+<Warning>
+  Laravel 12.x requires PHP 8.0+. Ensure your PHP version is compatible with your Laravel version.
+</Warning>
+
+## Optional Dependencies
+
+These packages are not required for basic functionality but enable additional features:
+
+### Export Features
+
+If you plan to use export functionality, install these packages:
+
+<CodeGroup>
+
+```bash Excel Export
+composer require maatwebsite/excel
+```
+
+```bash PDF Export
+composer require barryvdh/laravel-dompdf
+```
+
+</CodeGroup>
+
+- **maatwebsite/excel**: Required for the `exportExcel()` method to generate Excel spreadsheets
+- **barryvdh/laravel-dompdf**: Required for the `exportPdf()` method to generate PDF documents
+
+### Permission Management
+
+For advanced permission and role management features:
+
+<CodeGroup>
+
+```bash Spatie Permission
+composer require spatie/laravel-permission
+```
+
+```bash Module Support
+composer require nwidart/laravel-modules
+```
+
+</CodeGroup>
+
+- **spatie/laravel-permission**: Provides permission models, traits, and middleware for role-based access control
+- **nwidart/laravel-modules**: Required when using module-aware permissions in a modular application structure
+
+<Note>
+  These optional packages can be installed at any time. The Rest Generic Class will detect their presence and enable the corresponding features automatically.
+</Note>
+
+## Environment Considerations
+
+### Database
+
+The package works with any database supported by Laravel:
+
+- MySQL 5.7+
+- PostgreSQL 10+
+- SQLite 3.8.8+
+- SQL Server 2017+
+
+### Cache Stores
+
+For optimal caching performance, consider configuring one of these cache stores:
+
+- Redis (recommended for production)
+- Memcached
+- Database
+- File (default, suitable for development)
+
+### Server Requirements
+
+Your server should meet Laravel's standard requirements:
+
+- BCMath PHP Extension
+- Ctype PHP Extension
+- Fileinfo PHP Extension
+- JSON PHP Extension
+- Mbstring PHP Extension
+- OpenSSL PHP Extension
+- PDO PHP Extension
+- Tokenizer PHP Extension
+- XML PHP Extension
+
+<Note>
+  Check your PHP configuration with `php -m` to verify installed extensions.
+</Note>
+
+## Verifying Requirements
+
+Before installation, verify your environment:
+
+```bash
+# Check PHP version
+php -v
+
+# Check Laravel version (in your project)
+php artisan --version
+
+# Check installed PHP extensions
+php -m
+
+# Check Composer version
+composer --version
+```
+
+<Warning>
+  If you're upgrading from an older version of Laravel or PHP, review the [Laravel upgrade guide](https://laravel.com/docs/upgrade) before installing this package.
+</Warning>
+
+## Next Steps
+
+Once your environment meets these requirements, proceed to [installation setup](/installation/setup).

@@ -1,0 +1,499 @@
+---
+title: Core Concepts
+description: Understanding the Service-Controller-Model pattern, dynamic filtering system, relation loading, hierarchical data, caching strategy, and role-based field restrictions
+---
+
+# Core Concepts
+
+This page explains the fundamental concepts and design patterns used throughout Rest Generic Class. Understanding these concepts will help you leverage the package's full power.
+
+## Service-Controller-Model Pattern
+
+Rest Generic Class uses a three-layer architecture that separates concerns:
+
+<Steps>
+  <Step title="Model Layer - Data Structure">
+    Models extend `BaseModel` and define:
+    - Database structure (fillable, relations, casts)
+    - Business rules (validation, hierarchies)
+    - Security rules (allowed relations, field restrictions)
+    
+    **Responsibility**: What the data looks like and how it's validated.
+  </Step>
+  
+  <Step title="Service Layer - Business Logic">
+    Services extend `BaseService` and provide:
+    - CRUD operations (create, read, update, delete)
+    - Query building (filtering, relations, pagination)
+    - Cache management (versioning, invalidation)
+    - Business workflows (bulk operations, exports)
+    
+    **Responsibility**: How data is processed and retrieved.
+  </Step>
+  
+  <Step title="Controller Layer - HTTP Interface">
+    Controllers extend `RestController` and handle:
+    - HTTP request/response lifecycle
+    - Parameter parsing and normalization
+    - Transaction boundaries
+    - Error formatting
+    
+    **Responsibility**: How clients interact via HTTP.
+  </Step>
+</Steps>
+
+### Why This Pattern?
+
+- **Separation of Concerns**: Each layer has a single responsibility
+- **Testability**: Test business logic without HTTP concerns
+- **Reusability**: Services can be called from controllers, commands, jobs, or other services
+- **Consistency**: Same pattern across all resources in your application
+
+```php
+// Controller receives HTTP request
+public function index(Request $request)
+{
+    $params = $this->process_request($request);  // Parse HTTP params
+    return $this->service->list_all($params);     // Delegate to service
+}
+
+// Service builds and executes query
+public function list_all($params)
+{
+    $query = $this->modelClass->query();
+    $query = $this->process_query($params, $query);  // Apply filters, relations
+    return $query->get();                             // Return data
+}
+```
+
+## Dynamic Filtering System
+
+The filtering system uses an `oper` (operation) parameter that supports complex queries with nested relations.
+
+### Basic Filtering Syntax
+
+Filters are expressed as condition strings in format: `field|operator|value`
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|100",
+      "price|<=|500",
+      "name|like|%laptop%"
+    ]
+  }
+}
+```
+
+### Logical Operators
+
+Combine conditions with `and` or `or`:
+
+```json
+{
+  "oper": {
+    "or": [
+      "category_id|=|5",
+      "featured|=|true"
+    ]
+  }
+}
+```
+
+### Nested Logical Operators
+
+Build complex filter trees:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      {
+        "or": [
+          "price|<|50",
+          "on_sale|=|true"
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Supported Operators
+
+The package supports these operators (configurable in config):
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `=` | Equals | `status\|=\|active` |
+| `!=` | Not equals | `status\|!=\|deleted` |
+| `>` | Greater than | `price\|>\|100` |
+| `>=` | Greater than or equal | `price\|>=\|100` |
+| `<` | Less than | `stock\|<\|10` |
+| `<=` | Less than or equal | `stock\|<=\|10` |
+| `like` | SQL LIKE (case-sensitive) | `name\|like\|%laptop%` |
+| `ilike` | Case-insensitive LIKE | `email\|ilike\|%@gmail.com` |
+| `in` | In array | `category_id\|in\|[1,2,3]` |
+| `not in` | Not in array | `status\|not in\|[deleted,archived]` |
+| `between` | Between values | `price\|between\|[100,500]` |
+| `null` | Is NULL | `deleted_at\|null` |
+| `not null` | Is not NULL | `published_at\|not null` |
+
+<Note>
+Operators are validated against an allowlist in the configuration. You can customize which operators are allowed via `config/rest-generic-class.php`.
+</Note>
+
+### Relation Filtering (whereHas)
+
+Filter the main query based on related records:
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "category": {
+      "and": ["name|=|Electronics"]
+    }
+  }
+}
+```
+
+This translates to SQL:
+```sql
+SELECT * FROM products 
+WHERE status = 'active'
+AND EXISTS (
+  SELECT * FROM categories 
+  WHERE categories.id = products.category_id 
+  AND categories.name = 'Electronics'
+)
+```
+
+### Nested Relation Filtering
+
+Filter based on deeply nested relations using dot notation:
+
+```json
+{
+  "oper": {
+    "category.parent": {
+      "and": ["name|=|Technology"]
+    }
+  }
+}
+```
+
+<Warning>
+Relation filtering requires relations to be declared in the model's `RELATIONS` constant for security. Undeclared relations will throw a 400 error.
+</Warning>
+
+### Safety Limits
+
+The filtering system enforces limits to prevent abuse:
+
+- **Maximum depth**: Nested filter depth is limited (default 5 levels)
+- **Maximum conditions**: Total number of conditions is limited (default 100)
+- **Relation allowlists**: Only declared relations can be filtered
+- **Operator allowlists**: Only configured operators are allowed
+
+## Relation Loading
+
+Eager loading is controlled via the `relations` parameter.
+
+### Basic Relation Loading
+
+```http
+GET /api/v1/products?relations=["category","reviews"]
+```
+
+This eager loads both relations using Laravel's `with()` method.
+
+### Field Selection for Relations
+
+Load only specific fields from related models:
+
+```http
+GET /api/v1/products?relations=["category:id,name","reviews:id,rating,comment"]
+```
+
+**Important**: The package automatically includes foreign keys even if you don't specify them. For example, `category:id,name` will include `category_id` to ensure the relation works.
+
+### Nested Relations
+
+Load relations of relations:
+
+```http
+GET /api/v1/products?relations=["category.parent","reviews.user"]
+```
+
+### Nested Relations with Field Selection
+
+```http
+GET /api/v1/products?relations=["category.parent:id,name","reviews.user:id,name,avatar"]
+```
+
+### The "all" Shortcut
+
+Load all declared relations:
+
+```http
+GET /api/v1/products?relations=["all"]
+```
+
+This loads every relation in the model's `RELATIONS` constant.
+
+### Nested Filtering (_nested parameter)
+
+By default, relation filters (`oper.relationName`) affect the **root query** (SQL WHERE EXISTS). To also filter the **loaded relation data**, use `_nested=true`:
+
+```json
+{
+  "relations": ["reviews"],
+  "_nested": true,
+  "oper": {
+    "reviews": {
+      "and": ["rating|>=|4"]
+    }
+  }
+}
+```
+
+With `_nested=true`:
+- Root products are filtered to only those with reviews where rating >= 4 (WHERE EXISTS)
+- Loaded reviews are also filtered to only show reviews with rating >= 4
+
+Without `_nested=true`:
+- Root products are filtered (WHERE EXISTS)
+- But ALL reviews are loaded for those products
+
+## Hierarchical Data
+
+Models can represent tree structures by defining a self-referencing foreign key.
+
+### Enabling Hierarchy
+
+Define the foreign key in your model:
+
+```php
+class Category extends BaseModel
+{
+    const HIERARCHY_FIELD_ID = 'parent_id';
+    
+    protected $fillable = ['name', 'parent_id'];
+}
+```
+
+### Hierarchical Listing
+
+Request a tree structure with the `hierarchy` parameter:
+
+```json
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "children",
+    "max_depth": 3
+  }
+}
+```
+
+**Response Structure**:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Electronics",
+      "parent_id": null,
+      "children": [
+        {
+          "id": 5,
+          "name": "Computers",
+          "parent_id": 1,
+          "children": [
+            {
+              "id": 10,
+              "name": "Laptops",
+              "parent_id": 5,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Hierarchy Modes for show() Endpoint
+
+| Mode | Description |
+|------|-------------|
+| `node_only` | Just the requested node (no hierarchy) |
+| `with_descendants` | Node + all children/grandchildren |
+| `with_ancestors` | Chain from root down to this node |
+| `full_branch` | Root to node + all descendants |
+
+### Hierarchy Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `filter_mode` | string | `with_descendants` | How to build the tree |
+| `children_key` | string | `children` | Key name for nested children |
+| `max_depth` | int\|null | null | Maximum tree depth (null = unlimited) |
+| `include_empty_children` | bool | true | Include empty children arrays |
+
+<Warning>
+Unlimited depth (`max_depth: null`) on large trees can cause performance issues. Always set a reasonable limit in production.
+</Warning>
+
+## Caching Strategy
+
+Rest Generic Class uses a **version-based cache invalidation** strategy that works with any Laravel cache backend.
+
+### How It Works
+
+<Steps>
+  <Step title="Cache Key Generation">
+    Each read operation generates a cache key based on:
+    - Model class
+    - Operation (list_all, get_one)
+    - Route and HTTP method
+    - All query parameters
+    - Current user ID
+    - Selected headers (tenant, locale)
+    - **Model cache version**
+  </Step>
+  
+  <Step title="Cache Lookup">
+    Before running a query, check if a cached result exists for this exact key.
+    - If found: Return cached data
+    - If not found: Execute query, cache result, return data
+  </Step>
+  
+  <Step title="Version Bump on Write">
+    After any successful write operation (create, update, delete):
+    - Increment the model's cache version
+    - All existing cached reads become invalid (because version changed)
+    - Next reads will miss cache and regenerate with new version
+  </Step>
+</Steps>
+
+### Why Version-Based Invalidation?
+
+- **Works with all cache stores** (Redis, database, file, memcached) - doesn't require tags
+- **Atomic invalidation** - one version bump invalidates all cached queries for that model
+- **No cache pollution** - old keys naturally expire, no need to track and delete them
+- **Multi-server safe** - version is stored in shared cache, all servers see the change
+
+### Cache Configuration
+
+```env
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=60
+REST_CACHE_TTL_LIST=60
+REST_CACHE_TTL_ONE=30
+```
+
+### Per-Request Cache Control
+
+Clients can control caching behavior:
+
+```http
+# Disable cache for this request
+GET /api/v1/products?cache=false
+
+# Override TTL for this request (120 seconds)
+GET /api/v1/products?cache_ttl=120
+```
+
+### Multi-Tenant Cache Safety
+
+The cache key includes headers configured in `cache.vary.headers`:
+
+```php
+// config/rest-generic-class.php
+'cache' => [
+    'vary' => [
+        'headers' => ['X-Tenant-Id', 'Accept-Language'],
+    ],
+],
+```
+
+This ensures tenant A never sees cached data from tenant B.
+
+## Role-Based Field Restrictions
+
+Sensitive fields can be restricted to specific Spatie roles.
+
+### Defining Field Restrictions
+
+In your model, declare which roles can write which fields:
+
+```php /home/daytona/workspace/source/src/Core/Models/BaseModel.php:67-86
+protected array $fieldsByRole = [
+    'superadmin' => ['is_superuser', 'permissions'],
+    'admin'      => ['status', 'role_id', 'is_verified'],
+];
+```
+
+### How It Works
+
+- Fields NOT listed in any role are **base fields** - writable by anyone authenticated
+- Fields listed under a role are **privileged fields** - writable only by users with that role
+- Users with `is_superuser = true` bypass all restrictions
+
+**Example**:
+```php
+protected $fillable = ['name', 'email', 'status', 'is_verified'];
+
+protected array $fieldsByRole = [
+    'admin' => ['status', 'is_verified'],
+];
+```
+
+- Regular users can write: `name`, `email`
+- Admin users can write: `name`, `email`, `status`, `is_verified`
+- Superusers can write: all fields
+
+### Enforcement Points
+
+Field restrictions are enforced at two points:
+
+1. **FilterRequestByRole Middleware** - Strips prohibited fields from the request payload
+2. **BaseRequest Validation** - Adds `prohibited` validation rules for denied fields
+
+This dual enforcement provides defense in depth.
+
+<Note>
+Field restrictions require `spatie/laravel-permission` package. If not installed, the feature is inactive.
+</Note>
+
+## Query Parameters Reference
+
+Quick reference for all supported query parameters:
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|----------|
+| `select` | array | Fields to select | `["id","name","price"]` |
+| `relations` | array | Relations to load | `["category:id,name"]` |
+| `oper` | object | Filter conditions | `{"and":["status\|=\|active"]}` |
+| `orderby` | array | Sorting | `[{"price":"desc"}]` |
+| `pagination` | object | Pagination config | `{"page":1,"pageSize":25}` |
+| `_nested` | boolean | Apply relation filters to loaded data | `true` |
+| `hierarchy` | object | Enable hierarchical listing | `{"filter_mode":"with_descendants"}` |
+| `cache` | boolean | Enable/disable cache | `false` |
+| `cache_ttl` | integer | Override cache TTL (seconds) | `120` |
+| `attr` / `eq` | object | Legacy equality filters | `{"status":"active"}` |
+
+## Next Steps
+
+Now that you understand the core concepts, you're ready to build your first REST API:
+
+<Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+  Follow the step-by-step guide to create a complete REST API in 5 minutes
+</Card>

@@ -1,0 +1,678 @@
+---
+title: Permission Traits
+description: API reference for HasPermissionsController and HasPermissionsService traits that integrate with Spatie Laravel Permission
+---
+
+## Overview
+
+Rest Generic Class provides two traits for permission management that integrate with `spatie/laravel-permission`:
+
+1. **HasPermissionsController** - HTTP endpoints for permission operations
+2. **HasPermissionsService** - Business logic for permission assignment and retrieval
+
+These traits provide:
+
+- Assign permissions to roles or users (ADD/SYNC/REVOKE modes)
+- Retrieve permissions by role or user
+- Auto-generate permissions from routes
+- Filter permissions by module, entity, or prefix
+- Aggregate permissions across roles/users
+- Support for pivot attributes on user permissions
+
+**Namespace**: `Ronu\RestGenericClass\Core\Traits`
+
+**Location**: 
+- `/src/Core/Traits/HasPermissionsController.php:11`
+- `/src/Core/Traits/HasPermissionsService.php:21`
+
+## HasPermissionsController
+
+Provides HTTP endpoints for permission management.
+
+### Usage
+
+```php
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+use Ronu\RestGenericClass\Core\Traits\HasPermissionsController;
+
+class PermissionController extends RestController
+{
+    use HasPermissionsController;
+}
+```
+
+### Methods
+
+#### modules
+
+Retrieve list of application modules.
+
+```php
+public function modules(Request $request): array
+```
+
+**Query Parameters:**
+- `enabled` (bool|null) - Filter by enabled status (true/false/null for all)
+
+**Example:**
+
+```http
+GET /api/permissions/modules?enabled=true
+```
+
+Response:
+```json
+[
+  "Users",
+  "Products",
+  "Orders",
+  "--site--"
+]
+```
+
+<Note>
+`--site--` is a special module representing routes without a specific module.
+</Note>
+
+#### assign_roles
+
+Assign permissions to roles.
+
+```php
+public function assign_roles(BaseFormRequest $request): \Illuminate\Http\JsonResponse
+```
+
+**Request Body:**
+
+```json
+{
+  "roles": ["admin", "editor"],
+  "guard": "api",
+  "mode": "ADD",
+  "dry_run": false,
+  "no_create": false,
+  "perms": ["users.read", "users.create"],
+  "prefix": "users.",
+  "from": "permissions.json",
+  "modules": ["Users"],
+  "entities": ["users", "mod_sales.orders"],
+  "by": "name"
+}
+```
+
+**Parameters:**
+
+- `roles` (array|string) - Role names or IDs (comma-separated or array)
+- `guard` (string) - Guard name (default: `'api'`)
+- `mode` (string) - Operation mode: `'ADD'`, `'SYNC'`, or `'REVOKE'`
+- `dry_run` (bool) - Preview changes without persisting (default: `false`)
+- `no_create` (bool) - Don't create missing permissions (default: `false`)
+- `perms` (array) - Explicit permission names
+- `prefix` (string) - Filter permissions by prefix (e.g., `'users.'`)
+- `from` (string) - Load permissions from JSON/YAML file
+- `modules` (array) - Filter by module names
+- `entities` (array) - Filter by entity names (format: `'entity'` or `'module.entity'`)
+- `by` (string) - Identify roles by `'name'` or `'id'` (default: `'name'`)
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "guard": "api",
+    "mode": "ADD",
+    "perms_count": 5,
+    "created_count": 0,
+    "used_default_all": false
+  },
+  "per_role": [
+    {
+      "role": "admin",
+      "guard": "api",
+      "mode": "ADD",
+      "rows": [
+        {
+          "permission": "users.read",
+          "module": "Users",
+          "guard": "api",
+          "action": "ADD"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Example:**
+
+```http
+POST /api/permissions/assign_roles
+Content-Type: application/json
+
+{
+  "roles": ["editor"],
+  "guard": "api",
+  "mode": "SYNC",
+  "modules": ["Products"]
+}
+```
+
+#### assign_users
+
+Assign permissions to users.
+
+```php
+public function assign_users(BaseFormRequest $request): \Illuminate\Http\JsonResponse
+```
+
+**Request Body:**
+
+```json
+{
+  "users": [10, 12, 15],
+  "by": "id",
+  "guard": "api",
+  "mode": "ADD",
+  "dry_run": false,
+  "no_create": false,
+  "perms": ["users.read", "users.create"],
+  "prefix": "users.",
+  "from": "permissions.json",
+  "modules": ["Users"],
+  "entities": ["users"],
+  "pivot": {"range": "global", "team_id": 42}
+}
+```
+
+**Parameters:**
+
+Same as `assign_roles`, plus:
+
+- `users` (array|string) - User identifiers (IDs, emails, or names)
+- `by` (string) - Identify users by `'id'`, `'email'`, or `'name'` (default: `'id'`)
+- `pivot` (object) - Additional pivot attributes for `model_has_permissions` table
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "guard": "api",
+    "mode": "ADD",
+    "perms_count": 3,
+    "created_count": 0,
+    "used_default_all": false
+  },
+  "per_user": [
+    {
+      "user_label": "10 ([email protected])",
+      "guard": "api",
+      "mode": "ADD",
+      "rows": [
+        {
+          "permission": "users.read",
+          "module": "Users",
+          "guard": "api",
+          "action": "ADD"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Example with Pivot:**
+
+```http
+POST /api/permissions/assign_users
+Content-Type: application/json
+
+{
+  "users": ["[email protected]"],
+  "by": "email",
+  "mode": "ADD",
+  "perms": ["projects.view"],
+  "pivot": {"project_id": 5, "access_level": "read"}
+}
+```
+
+## HasPermissionsService
+
+Provides business logic for permission operations.
+
+### Usage
+
+```php
+use Ronu\RestGenericClass\Core\Traits\HasPermissionsService;
+
+class PermissionService
+{
+    use HasPermissionsService;
+}
+```
+
+### Methods
+
+#### assignPermissionToRoles
+
+Assign permissions to roles with ADD/SYNC/REVOKE modes.
+
+```php
+public function assignPermissionToRoles(array $roleInputs, array $options): array
+```
+
+**Parameters:**
+
+- `array $roleInputs` - Role names or IDs
+- `array $options` - Configuration array:
+  - `guard` (string) - Guard name
+  - `mode` (string) - `'ADD'`, `'SYNC'`, or `'REVOKE'`
+  - `dry_run` (bool) - Preview only
+  - `perms` (array) - Permission names
+  - `prefix` (string) - Permission prefix filter
+  - `from` (string) - JSON/YAML file path
+  - `modules` (array) - Module filter
+  - `entities` (array) - Entity filter
+  - `by` (string) - Identify roles by `'name'` or `'id'`
+
+**Returns:**
+
+```php
+[
+    'summary' => [
+        'guard' => 'api',
+        'mode' => 'ADD',
+        'perms_count' => 10,
+        'created_count' => 2,
+        'used_default_all' => false
+    ],
+    'per_role' => [
+        [
+            'role' => 'admin',
+            'guard' => 'api',
+            'mode' => 'ADD',
+            'rows' => [
+                [
+                    'permission' => 'users.read',
+                    'module' => 'Users',
+                    'guard' => 'api',
+                    'action' => 'ADD'
+                ]
+            ]
+        ]
+    ]
+]
+```
+
+**Example:**
+
+```php
+$result = $service->assignPermissionToRoles(
+    ['admin', 'editor'],
+    [
+        'guard' => 'api',
+        'mode' => 'ADD',
+        'modules' => ['Users', 'Products']
+    ]
+);
+```
+
+#### assignPermissionToUsers
+
+Assign permissions to users.
+
+```php
+public function assignPermissionToUsers(array $userInputs, array $options): array
+```
+
+**Parameters:**
+
+Same as `assignPermissionToRoles`, plus:
+
+- `pivot` (array) - Pivot attributes for `model_has_permissions`
+
+**Example:**
+
+```php
+$result = $service->assignPermissionToUsers(
+    [[email protected]', '[email protected]'],
+    [
+        'guard' => 'api',
+        'mode' => 'ADD',
+        'perms' => ['users.read'],
+        'by' => 'email',
+        'pivot' => ['team_id' => 5]
+    ]
+);
+```
+
+#### getPermissionsByRoles
+
+Retrieve permissions for given roles.
+
+```php
+public function getPermissionsByRoles(
+    array $roleIdsOrNames, 
+    string $by = 'id', 
+    ?string $guard = null, 
+    ?array $modules = null, 
+    ?array $entities = null
+): array
+```
+
+**Example:**
+
+```php
+$permissions = $service->getPermissionsByRoles(
+    ['admin', 'editor'],
+    'name',
+    'api',
+    ['Users'],
+    null
+);
+```
+
+Response:
+```php
+[
+    [
+        'role' => 'admin',
+        'guard' => 'api',
+        'count' => 15,
+        'permissions' => [
+            ['id' => 1, 'name' => 'users.read', 'module' => 'Users', 'guard' => 'api'],
+            ['id' => 2, 'name' => 'users.create', 'module' => 'Users', 'guard' => 'api'],
+        ]
+    ]
+]
+```
+
+#### getPermissionsByUsers
+
+Retrieve permissions for given users.
+
+```php
+public function getPermissionsByUsers(
+    array $userSearchValues, 
+    $userModelClass, 
+    string $by = 'id', 
+    ?string $guard = null, 
+    ?array $modules = null, 
+    ?array $entities = null
+): array
+```
+
+**Example:**
+
+```php
+$permissions = $service->getPermissionsByUsers(
+    [10, 12],
+    User::class,
+    'id',
+    'api',
+    null,
+    null
+);
+```
+
+Response:
+```php
+[
+    [
+        'user' => ['id' => 10, 'email' => '[email protected]', 'name' => 'John Doe'],
+        'guard' => 'api',
+        'count' => 8,
+        'permissions' => [
+            ['id' => 1, 'name' => 'users.read', 'module' => 'Users', 'guard' => 'api']
+        ]
+    ]
+]
+```
+
+#### aggregate
+
+Aggregate permissions across roles/users.
+
+```php
+public function aggregate(array $lists, string $mode = 'union'): Collection
+```
+
+**Parameters:**
+
+- `array $lists` - Array of permission lists from `getPermissionsByRoles` or `getPermissionsByUsers`
+- `string $mode` - `'union'` (all unique permissions) or `'intersection'` (common permissions)
+
+**Example:**
+
+```php
+$role1Perms = $service->getPermissionsByRoles(['admin'], 'name');
+$role2Perms = $service->getPermissionsByRoles(['editor'], 'name');
+
+// Get all unique permissions
+$allPerms = $service->aggregate([$role1Perms[0], $role2Perms[0]], 'union');
+
+// Get common permissions
+$commonPerms = $service->aggregate([$role1Perms[0], $role2Perms[0]], 'intersection');
+```
+
+#### refreshPermissions
+
+Auto-generate permissions from application routes.
+
+```php
+public function refreshPermissions($guard, $dry): array
+```
+
+**Parameters:**
+
+- `string $guard` - Guard name
+- `bool $dry` - Dry run (don't persist changes)
+
+**Returns:**
+
+Array of detected permissions:
+
+```php
+[
+    [
+        'permission' => 'users.read',
+        'model' => 'users',
+        'type' => 'read',
+        'route' => 'api/users',
+        'methods' => 'GET',
+        'controller' => 'UserController@index'
+    ]
+]
+```
+
+**Example:**
+
+```php
+$permissions = $service->refreshPermissions('api', false);
+```
+
+## Operation Modes
+
+### ADD Mode
+
+Adds permissions without removing existing ones.
+
+```json
+{"mode": "ADD", "perms": ["users.read"]}
+```
+
+**Behavior:**
+- Adds specified permissions
+- Keeps existing permissions intact
+- Equivalent to `givePermissionTo()`
+
+### SYNC Mode
+
+Replaces all permissions with specified set.
+
+```json
+{"mode": "SYNC", "perms": ["users.read", "users.update"]}
+```
+
+**Behavior:**
+- Removes all existing permissions
+- Adds specified permissions
+- Equivalent to `syncPermissions()`
+
+### REVOKE Mode
+
+Removes specified permissions.
+
+```json
+{"mode": "REVOKE", "perms": ["users.delete"]}
+```
+
+**Behavior:**
+- Removes specified permissions
+- Keeps other permissions intact
+- Equivalent to `revokePermissionTo()`
+
+## Permission Filtering
+
+### By Module
+
+```json
+{
+  "modules": ["Users", "Products"]
+}
+```
+
+Loads all permissions where `module` column matches.
+
+### By Entity
+
+```json
+{
+  "entities": ["users", "products"]
+}
+```
+
+Loads permissions where `model` column matches (case-insensitive).
+
+**With module prefix:**
+
+```json
+{
+  "entities": ["mod_sales.orders"]
+}
+```
+
+Filters by both `module='mod_sales'` AND `model='orders'`.
+
+### By Prefix
+
+```json
+{
+  "prefix": "users."
+}
+```
+
+Loads permissions where `name` starts with `users.` (e.g., `users.read`, `users.create`).
+
+### From File
+
+```json
+{
+  "from": "permissions.json"
+}
+```
+
+Loads permission names from JSON/YAML file:
+
+```json
+[
+  "users.read",
+  "users.create",
+  "products.read"
+]
+```
+
+## Pivot Attributes (User Permissions)
+
+Add custom pivot columns to `model_has_permissions`:
+
+```php
+// Migration
+Schema::table('model_has_permissions', function (Blueprint $table) {
+    $table->unsignedBigInteger('team_id')->nullable();
+    $table->string('access_level')->default('read');
+    $table->timestamp('expires_at')->nullable();
+});
+```
+
+Assign with pivot data:
+
+```http
+POST /api/permissions/assign_users
+{
+  "users": [10],
+  "perms": ["projects.view"],
+  "pivot": {
+    "team_id": 5,
+    "access_level": "admin",
+    "expires_at": "2025-12-31 23:59:59"
+  }
+}
+```
+
+## Error Handling
+
+### Roles Not Found
+
+```php
+// Throws NotFoundResourceException
+"No roles found for the given identifiers and guard."
+```
+
+### Users Not Found
+
+```php
+// Throws RuntimeException
+"No users found for the given identifiers."
+```
+
+### Invalid Mode
+
+```php
+// Throws InvalidArgumentException
+"Cannot use both sync and revoke simultaneously."
+```
+
+### Invalid Column
+
+```php
+// Throws RuntimeException
+"Error querying roles by 'invalid_column' (column 'invalid_column' may not exist)."
+```
+
+## Configuration
+
+Configure Spatie permission package in `config/permission.php`:
+
+```php
+'models' => [
+    'permission' => Spatie\Permission\Models\Permission::class,
+    'role' => Spatie\Permission\Models\Role::class,
+],
+
+'table_names' => [
+    'roles' => 'roles',
+    'permissions' => 'permissions',
+    'model_has_permissions' => 'model_has_permissions',
+    'model_has_roles' => 'model_has_roles',
+    'role_has_permissions' => 'role_has_permissions',
+],
+```
+
+## Related Documentation
+
+- [Spatie Laravel Permission](https://spatie.be/docs/laravel-permission) - Official package docs
+- [Permissions Guide](/guides/permissions) - Usage guide
+- [Middleware](/api/middleware/spatie-authorize) - Authorization middleware

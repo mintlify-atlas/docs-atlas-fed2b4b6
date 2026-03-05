@@ -1,0 +1,278 @@
+---
+title: Environment Variables
+description: Complete reference of all environment variables used by Rest Generic Class
+---
+
+The Rest Generic Class package reads all configuration values from `config/rest-generic-class.php`, which in turn reads environment variables. This design is safe for Laravel's configuration caching.
+
+## Logging Variables
+
+### LOG_LEVEL
+
+<ParamField path="LOG_LEVEL" type="string" default="debug">
+  Sets the minimum log level for the package's logging channel.
+  
+  **Valid values:** `emergency`, `alert`, `critical`, `error`, `warning`, `notice`, `info`, `debug`
+  
+  **Example:**
+  ```env
+  LOG_LEVEL=error
+  ```
+</ParamField>
+
+### LOG_QUERY
+
+<ParamField path="LOG_QUERY" type="boolean" default="false">
+  When enabled, logs all query operations to `storage/logs/query.log` for debugging.
+  
+  **Use case:** Debugging API filtering and query generation
+  
+  **Example:**
+  ```env
+  LOG_QUERY=true
+  ```
+</ParamField>
+
+<Warning>
+Enabling `LOG_QUERY` in production can significantly increase log file sizes and I/O overhead. Use only for troubleshooting.
+</Warning>
+
+## Filtering Variables
+
+### REST_VALIDATE_COLUMNS
+
+<ParamField path="REST_VALIDATE_COLUMNS" type="boolean" default="true">
+  Validates that column names in filter conditions exist in the database table before executing queries.
+  
+  **Security:** Prevents SQL injection and information disclosure
+  
+  **Example:**
+  ```env
+  REST_VALIDATE_COLUMNS=true
+  ```
+</ParamField>
+
+### REST_STRICT_COLUMNS
+
+<ParamField path="REST_STRICT_COLUMNS" type="boolean" default="true">
+  Enforces strict column validation, rejecting requests with invalid column names.
+  
+  **When false:** Invalid columns are silently ignored
+  **When true:** Invalid columns cause validation errors
+  
+  **Example:**
+  ```env
+  REST_STRICT_COLUMNS=true
+  ```
+</ParamField>
+
+<Note>
+Both `REST_VALIDATE_COLUMNS` and `REST_STRICT_COLUMNS` should be `true` in production for security. Disabling these allows potentially unsafe column names in queries.
+</Note>
+
+## Cache Variables
+
+### REST_CACHE_ENABLED
+
+<ParamField path="REST_CACHE_ENABLED" type="boolean" default="false">
+  Master switch for response caching in `BaseService` read operations.
+  
+  **When enabled:** `list_all` and `get_one` methods cache responses
+  
+  **Example:**
+  ```env
+  REST_CACHE_ENABLED=true
+  ```
+</ParamField>
+
+### REST_CACHE_STORE
+
+<ParamField path="REST_CACHE_STORE" type="string" default="env('CACHE_STORE')">
+  Specifies which Laravel cache store to use for caching responses.
+  
+  **Valid values:** Any Laravel cache driver (`redis`, `database`, `file`, `memcached`, `dynamodb`, `array`)
+  
+  **Example:**
+  ```env
+  REST_CACHE_STORE=redis
+  ```
+</ParamField>
+
+### REST_CACHE_TTL
+
+<ParamField path="REST_CACHE_TTL" type="integer" default="60">
+  Default time-to-live (in seconds) for cached responses.
+  
+  **Used when:** Method-specific TTL is not defined
+  
+  **Example:**
+  ```env
+  REST_CACHE_TTL=300
+  ```
+</ParamField>
+
+### REST_CACHE_TTL_LIST
+
+<ParamField path="REST_CACHE_TTL_LIST" type="integer" default="60">
+  Time-to-live (in seconds) for `list_all` method responses.
+  
+  **Use case:** Cache list/index endpoints longer or shorter than single-item reads
+  
+  **Example:**
+  ```env
+  REST_CACHE_TTL_LIST=120
+  ```
+</ParamField>
+
+### REST_CACHE_TTL_ONE
+
+<ParamField path="REST_CACHE_TTL_ONE" type="integer" default="30">
+  Time-to-live (in seconds) for `get_one` method responses.
+  
+  **Use case:** Cache single-item reads with different TTL than lists
+  
+  **Example:**
+  ```env
+  REST_CACHE_TTL_ONE=60
+  ```
+</ParamField>
+
+## Validation Cache Variables
+
+### REST_VALIDATION_CACHE_ENABLED
+
+<ParamField path="REST_VALIDATION_CACHE_ENABLED" type="boolean" default="true">
+  Enables caching for database existence validation queries used by the `ValidatesExistenceInDatabase` trait.
+  
+  **Performance impact:** Significantly reduces database load for validation
+  
+  **Example:**
+  ```env
+  REST_VALIDATION_CACHE_ENABLED=true
+  ```
+</ParamField>
+
+### REST_VALIDATION_CACHE_TTL
+
+<ParamField path="REST_VALIDATION_CACHE_TTL" type="integer" default="3600">
+  Time-to-live (in seconds) for cached validation query results.
+  
+  **Recommendation:** Use longer TTL (1+ hours) since table schemas rarely change
+  
+  **Example:**
+  ```env
+  REST_VALIDATION_CACHE_TTL=7200
+  ```
+</ParamField>
+
+### REST_VALIDATION_CACHE_PREFIX
+
+<ParamField path="REST_VALIDATION_CACHE_PREFIX" type="string" default="validation">
+  Prefix for validation cache keys, helping organize and identify validation-related cache entries.
+  
+  **Example:**
+  ```env
+  REST_VALIDATION_CACHE_PREFIX=rest_validation
+  ```
+</ParamField>
+
+### REST_VALIDATION_CONNECTION
+
+<ParamField path="REST_VALIDATION_CONNECTION" type="string" default="db">
+  Database connection name used for validation queries.
+  
+  **Use case:** Use a read replica for validation queries to reduce primary database load
+  
+  **Example:**
+  ```env
+  REST_VALIDATION_CONNECTION=mysql_read
+  ```
+</ParamField>
+
+## Example Configurations
+
+### Development Environment
+
+```env
+# Logging
+LOG_LEVEL=debug
+LOG_QUERY=true
+
+# Filtering
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Cache (disabled for development)
+REST_CACHE_ENABLED=false
+
+# Validation cache
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=3600
+```
+
+### Production Environment
+
+```env
+# Logging
+LOG_LEVEL=error
+LOG_QUERY=false
+
+# Filtering
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Cache (Redis for production)
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=300
+REST_CACHE_TTL_LIST=300
+REST_CACHE_TTL_ONE=600
+
+# Validation cache
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=7200
+REST_VALIDATION_CACHE_PREFIX=validation
+REST_VALIDATION_CONNECTION=mysql_read
+```
+
+### Staging Environment
+
+```env
+# Logging
+LOG_LEVEL=info
+LOG_QUERY=false
+
+# Filtering
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Cache (file-based for simple staging)
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=file
+REST_CACHE_TTL=120
+REST_CACHE_TTL_LIST=120
+REST_CACHE_TTL_ONE=180
+
+# Validation cache
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=3600
+```
+
+## Configuration Caching Behavior
+
+<Warning>
+When you run `php artisan config:cache`, Laravel caches all configuration values. After caching, changes to `.env` files are **ignored** until you clear the cache with `php artisan config:clear` or re-cache.
+</Warning>
+
+This is why the package reads environment variables **only** from the config file, not directly via `env()` calls in service code. This pattern ensures compatibility with Laravel's configuration caching.
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Cache Strategy" icon="database" href="/configuration/cache-strategy">
+    Learn about cache stores, TTL strategies, and invalidation
+  </Card>
+  <Card title="Validation Config" icon="shield-check" href="/configuration/validation">
+    Configure validation caching behavior
+  </Card>
+</CardGroup>

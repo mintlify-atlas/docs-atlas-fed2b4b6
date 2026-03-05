@@ -1,0 +1,541 @@
+---
+title: Hierarchical Data
+description: Learn how to work with self-referencing models, build tree structures, and query parent-child relationships
+---
+
+## Overview
+
+Rest Generic Class provides built-in support for hierarchical (tree) data structures. This is useful for:
+
+- **Categories** with parent-child relationships
+- **Organizational charts** with employee hierarchies
+- **Menu systems** with nested items
+- **Comment threads** with replies
+- **File/folder structures** with nested directories
+
+## Enabling Hierarchy Support
+
+### Define the Hierarchy Field
+
+Add the `HIERARCHY_FIELD_ID` constant to your model:
+
+```php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Category extends BaseModel
+{
+    protected $fillable = ['name', 'parent_id', 'order'];
+    
+    // Enable hierarchical support
+    const HIERARCHY_FIELD_ID = 'parent_id';
+    const RELATIONS = ['hierarchyParent', 'hierarchyChildren'];
+    
+    // Eloquent self-referencing relation
+    public function parent()
+    {
+        return $this->belongsTo(Category::class, 'parent_id');
+    }
+    
+    public function children()
+    {
+        return $this->hasMany(Category::class, 'parent_id');
+    }
+}
+```
+
+<Note>
+The field name can be anything (`parent_id`, `parent_category_id`, etc.) — just set `HIERARCHY_FIELD_ID` to match your database column.
+</Note>
+
+### Automatic Helper Relations
+
+When `HIERARCHY_FIELD_ID` is defined, BaseModel automatically provides:
+
+```php
+// Get parent
+$category->hierarchyParent;  // Returns parent Category or null
+
+// Get children
+$category->hierarchyChildren;  // Returns Collection of child Categories
+```
+
+Add these to your `RELATIONS` constant to allow eager-loading:
+
+```php
+const RELATIONS = ['hierarchyParent', 'hierarchyChildren'];
+```
+
+## Querying Hierarchical Data
+
+### List with Hierarchy
+
+Use the `hierarchy` parameter to get nested tree structure:
+
+```http
+GET /api/categories?hierarchy=true
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Electronics",
+      "parent_id": null,
+      "children": [
+        {
+          "id": 2,
+          "name": "Computers",
+          "parent_id": 1,
+          "children": [
+            {
+              "id": 3,
+              "name": "Laptops",
+              "parent_id": 2,
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "name": "Phones",
+          "parent_id": 1,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "name": "Books",
+      "parent_id": null,
+      "children": []
+    }
+  ]
+}
+```
+
+### Filter by Parent
+
+Get children of a specific parent:
+
+```http
+GET /api/categories?oper={"and":["parent_id|=|1"]}
+```
+
+Get root-level items (no parent):
+
+```http
+GET /api/categories?oper={"and":["parent_id|null|"]}
+```
+
+### Eager-Load Parent/Children
+
+```http
+GET /api/categories?relations=["hierarchyParent","hierarchyChildren"]
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 2,
+      "name": "Computers",
+      "parent_id": 1,
+      "hierarchyParent": {
+        "id": 1,
+        "name": "Electronics"
+      },
+      "hierarchyChildren": [
+        {
+          "id": 3,
+          "name": "Laptops"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Tree Building
+
+### Automatic Tree Assembly
+
+When `hierarchy=true`, the service automatically:
+
+1. Loads all records matching filters
+2. Organizes them into parent-child structure
+3. Returns only root-level nodes with nested children
+
+### Manual Tree Building
+
+Build a tree from a flat collection:
+
+```php
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class CategoryService extends BaseService
+{
+    public function getTreeStructure(): array
+    {
+        // Get all categories
+        $categories = $this->modelClass::all();
+        
+        // Build tree
+        return $this->buildTree($categories->toArray(), 'parent_id', 'id');
+    }
+    
+    protected function buildTree(array $elements, string $parentField, string $idField, $parentId = null): array
+    {
+        $branch = [];
+        
+        foreach ($elements as $element) {
+            if ($element[$parentField] == $parentId) {
+                $children = $this->buildTree($elements, $parentField, $idField, $element[$idField]);
+                
+                if ($children) {
+                    $element['children'] = $children;
+                }
+                
+                $branch[] = $element;
+            }
+        }
+        
+        return $branch;
+    }
+}
+```
+
+## Common Patterns
+
+### Breadcrumb Trail
+
+Get all ancestors of a node:
+
+```php
+public function getBreadcrumbs(int $categoryId): array
+{
+    $breadcrumbs = [];
+    $category = Category::find($categoryId);
+    
+    while ($category) {
+        array_unshift($breadcrumbs, [
+            'id' => $category->id,
+            'name' => $category->name
+        ]);
+        $category = $category->hierarchyParent;
+    }
+    
+    return $breadcrumbs;
+}
+```
+
+Result:
+```php
+[
+    ['id' => 1, 'name' => 'Electronics'],
+    ['id' => 2, 'name' => 'Computers'],
+    ['id' => 3, 'name' => 'Laptops']
+]
+```
+
+### Subtree Selection
+
+Get all descendants of a node:
+
+```php
+public function getSubtree(int $parentId): Collection
+{
+    $descendants = collect();
+    $this->collectDescendants(Category::find($parentId), $descendants);
+    return $descendants;
+}
+
+private function collectDescendants($node, Collection $collection): void
+{
+    if (!$node) return;
+    
+    $collection->push($node);
+    
+    foreach ($node->hierarchyChildren as $child) {
+        $this->collectDescendants($child, $collection);
+    }
+}
+```
+
+### Level/Depth Calculation
+
+Compute depth of each node:
+
+```php
+public function calculateDepth(int $categoryId): int
+{
+    $depth = 0;
+    $category = Category::find($categoryId);
+    
+    while ($category && $category->hierarchyParent) {
+        $depth++;
+        $category = $category->hierarchyParent;
+    }
+    
+    return $depth;
+}
+```
+
+### Prevent Circular References
+
+Validate parent assignment:
+
+```php
+public function setParent(int $categoryId, ?int $newParentId): bool
+{
+    if ($newParentId === null) {
+        return true; // Root level is always valid
+    }
+    
+    // Check if new parent is a descendant (would create cycle)
+    $descendants = $this->getSubtree($categoryId)->pluck('id');
+    
+    if ($descendants->contains($newParentId)) {
+        throw new \InvalidArgumentException(
+            "Cannot set parent: would create circular reference"
+        );
+    }
+    
+    $category = Category::find($categoryId);
+    $category->parent_id = $newParentId;
+    $category->save();
+    
+    return true;
+}
+```
+
+## Advanced Queries
+
+### Query with Depth Limit
+
+Limit tree depth:
+
+```php
+public function getTreeWithDepth(int $maxDepth): array
+{
+    return $this->buildTreeWithDepth(
+        Category::all()->toArray(),
+        'parent_id',
+        'id',
+        null,
+        0,
+        $maxDepth
+    );
+}
+
+protected function buildTreeWithDepth(
+    array $elements,
+    string $parentField,
+    string $idField,
+    $parentId,
+    int $currentDepth,
+    int $maxDepth
+): array {
+    if ($currentDepth >= $maxDepth) {
+        return [];
+    }
+    
+    $branch = [];
+    
+    foreach ($elements as $element) {
+        if ($element[$parentField] == $parentId) {
+            $children = $this->buildTreeWithDepth(
+                $elements,
+                $parentField,
+                $idField,
+                $element[$idField],
+                $currentDepth + 1,
+                $maxDepth
+            );
+            
+            if ($children) {
+                $element['children'] = $children;
+            }
+            
+            $branch[] = $element;
+        }
+    }
+    
+    return $branch;
+}
+```
+
+### Sorting Within Hierarchy
+
+Add an `order` field for custom sorting:
+
+```php
+protected $fillable = ['name', 'parent_id', 'order'];
+
+public function children()
+{
+    return $this->hasMany(Category::class, 'parent_id')
+        ->orderBy('order');
+}
+```
+
+Request:
+```http
+GET /api/categories?hierarchy=true&orderby={"order":"asc"}
+```
+
+## Database Optimization
+
+### Indexes
+
+Add indexes for performance:
+
+```php
+Schema::table('categories', function (Blueprint $table) {
+    $table->index('parent_id');
+    $table->index(['parent_id', 'order']);
+});
+```
+
+### Materialized Path (Alternative)
+
+For very large trees, consider using a materialized path:
+
+```php
+// Migration
+$table->string('path')->nullable();  // e.g., "1/2/3"
+$table->integer('depth')->default(0);
+
+// Update path on save
+protected static function booted()
+{
+    static::saving(function ($category) {
+        if ($category->parent_id) {
+            $parent = Category::find($category->parent_id);
+            $category->path = $parent->path . '/' . $parent->id;
+            $category->depth = $parent->depth + 1;
+        } else {
+            $category->path = '';
+            $category->depth = 0;
+        }
+    });
+}
+
+// Query all descendants in one query
+public function descendants()
+{
+    return Category::where('path', 'like', $this->path . '/' . $this->id . '/%');
+}
+```
+
+## Nested Set Model (Alternative)
+
+For read-heavy hierarchies, use nested sets:
+
+```php
+// Consider using kalnoy/nestedset package
+use Kalnoy\Nestedset\NodeTrait;
+
+class Category extends BaseModel
+{
+    use NodeTrait;
+    
+    // Provides: ancestors(), descendants(), siblings(), isDescendantOf(), etc.
+}
+```
+
+## Common Use Cases
+
+### Menu System
+
+```php
+class MenuItem extends BaseModel
+{
+    const HIERARCHY_FIELD_ID = 'parent_id';
+    
+    protected $fillable = ['title', 'url', 'parent_id', 'order', 'visible'];
+    
+    public function scopeVisible($query)
+    {
+        return $query->where('visible', true);
+    }
+}
+```
+
+Build navigation:
+```http
+GET /api/menu-items?hierarchy=true&oper={"and":["visible|=|true"]}&orderby={"order":"asc"}
+```
+
+### Organizational Chart
+
+```php
+class Employee extends BaseModel
+{
+    const HIERARCHY_FIELD_ID = 'manager_id';
+    
+    protected $fillable = ['name', 'title', 'manager_id', 'department'];
+    
+    public function manager()
+    {
+        return $this->belongsTo(Employee::class, 'manager_id');
+    }
+    
+    public function directReports()
+    {
+        return $this->hasMany(Employee::class, 'manager_id');
+    }
+}
+```
+
+### Comment Threading
+
+```php
+class Comment extends BaseModel
+{
+    const HIERARCHY_FIELD_ID = 'parent_id';
+    
+    protected $fillable = ['content', 'user_id', 'post_id', 'parent_id'];
+    
+    public function replies()
+    {
+        return $this->hasMany(Comment::class, 'parent_id')
+            ->orderBy('created_at');
+    }
+}
+```
+
+## Performance Considerations
+
+1. **Eager-load relationships**: Use `relations` parameter to avoid N+1
+2. **Limit depth**: Deep trees can be slow to build
+3. **Cache trees**: Store built trees in cache for read-heavy scenarios
+4. **Pagination**: Use pagination for large flat lists, hierarchy for tree views
+5. **Database choice**: Consider PostgreSQL's recursive CTEs for complex queries
+
+## Error Handling
+
+```php
+// Circular reference attempt
+PUT /api/categories/1
+{"parent_id": 3}  // where 3 is a child of 1
+// Validate in controller or service
+
+// Invalid parent_id
+POST /api/categories
+{"name": "New", "parent_id": 99999}
+// Throws foreign key constraint error
+
+// Missing HIERARCHY_FIELD_ID
+GET /api/non-hierarchical-model?hierarchy=true
+// Returns normal flat list (hierarchy ignored)
+```
+
+## Related Documentation
+
+- [BaseModel Class](/core/models) - Model configuration
+- [Relation Loading](/core/relations) - Loading parent/child relations
+- [Advanced Filtering](/guides/advanced-filtering) - Filter by parent_id
+- [Hierarchical Data Guide](/guides/hierarchical-data) - Detailed examples

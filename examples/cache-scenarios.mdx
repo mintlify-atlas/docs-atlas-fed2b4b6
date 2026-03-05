@@ -1,0 +1,580 @@
+---
+title: Cache Usage Examples
+description: Real-world caching scenarios with Redis, multi-tenant setups, and performance optimization
+---
+
+This page demonstrates practical caching strategies using the Rest Generic Class package's built-in cache support.
+
+## Overview
+
+The package provides automatic caching for read operations (`list_all` and `get_one`) with support for:
+- Multiple cache stores (Redis, Database, File, Memcached)
+- Request-aware cache keys (query params, user context, tenant ID)
+- Automatic cache invalidation on write operations
+- Per-request cache control
+
+## Cache Strategy Overview
+
+### How Cache Keys Work
+
+Cache keys include:
+- **Model name** - Isolates different models
+- **Operation type** - `list` or `show`
+- **Route signature** - URL path
+- **Query parameters** - `select`, `relations`, `oper`, `pagination`
+- **User context** - Authenticated user ID
+- **Headers** - `Accept-Language`, `X-Tenant-Id`
+- **Model version** - Bumped on any write operation
+
+<Note>
+  Cache keys are automatically generated using SHA256 hashing of normalized request parameters. Different query params = different cache entries.
+</Note>
+
+## Setup Examples
+
+### Scenario 1: Basic Redis Cache Setup
+
+<Steps>
+
+<Step title="Install Redis Driver">
+  ```bash
+  composer require predis/predis
+  ```
+</Step>
+
+<Step title="Configure Redis Connection">
+  Edit `config/database.php`:
+  
+  ```php
+  'redis' => [
+      'client' => env('REDIS_CLIENT', 'predis'),
+      'default' => [
+          'host' => env('REDIS_HOST', '127.0.0.1'),
+          'port' => env('REDIS_PORT', 6379),
+          'database' => env('REDIS_DB', 0),
+      ],
+      'cache' => [
+          'host' => env('REDIS_HOST', '127.0.0.1'),
+          'port' => env('REDIS_PORT', 6379),
+          'database' => env('REDIS_CACHE_DB', 1),
+      ],
+  ],
+  ```
+</Step>
+
+<Step title="Enable Cache in Laravel">
+  Edit `config/cache.php`:
+  
+  ```php
+  'default' => env('CACHE_STORE', 'redis'),
+  
+  'stores' => [
+      'redis' => [
+          'driver' => 'redis',
+          'connection' => 'cache',
+          'lock_connection' => 'default',
+      ],
+  ],
+  ```
+</Step>
+
+<Step title="Enable Package Cache">
+  Add to `.env`:
+  
+  ```env
+  CACHE_STORE=redis
+  REST_CACHE_ENABLED=true
+  REST_CACHE_STORE=redis
+  REST_CACHE_TTL=300
+  REST_CACHE_TTL_LIST=300
+  REST_CACHE_TTL_ONE=600
+  ```
+</Step>
+
+</Steps>
+
+### Scenario 2: Database Cache (No Redis)
+
+**Goal:** Use database caching when Redis is not available.
+
+<Steps>
+
+<Step title="Create Cache Table">
+  ```bash
+  php artisan cache:table
+  php artisan migrate
+  ```
+</Step>
+
+<Step title="Configure Cache Store">
+  ```env
+  CACHE_STORE=database
+  REST_CACHE_ENABLED=true
+  REST_CACHE_STORE=database
+  REST_CACHE_TTL=300
+  ```
+</Step>
+
+</Steps>
+
+<Warning>
+  Database caching is slower than Redis but works without additional infrastructure. Use Redis for production environments with high traffic.
+</Warning>
+
+### Scenario 3: File Cache (Development)
+
+**Goal:** Simple file-based caching for local development.
+
+```env
+CACHE_STORE=file
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=file
+REST_CACHE_TTL=300
+```
+
+## Multi-Tenant Caching
+
+### Scenario 4: Tenant-Aware Cache Keys
+
+**Goal:** Prevent cache leakage between tenants in a multi-tenant application.
+
+<Steps>
+
+<Step title="Add Tenant Middleware">
+  Create `app/Http/Middleware/SetTenantContext.php`:
+  
+  ```php
+  <?php
+  
+  namespace App\Http\Middleware;
+  
+  use Closure;
+  use Illuminate\Http\Request;
+  
+  class SetTenantContext
+  {
+      public function handle(Request $request, Closure $next)
+      {
+          $tenantId = $request->header('X-Tenant-Id') 
+                   ?? $request->user()?->tenant_id;
+          
+          if ($tenantId) {
+              $request->headers->set('X-Tenant-Id', $tenantId);
+          }
+          
+          return $next($request);
+      }
+  }
+  ```
+</Step>
+
+<Step title="Register Middleware">
+  Add to `app/Http/Kernel.php`:
+  
+  ```php
+  protected $middlewareGroups = [
+      'api' => [
+          // ...
+          \App\Http\Middleware\SetTenantContext::class,
+      ],
+  ];
+  ```
+</Step>
+
+<Step title="Make API Requests with Tenant Header">
+  ```http
+  GET /api/v1/products
+  X-Tenant-Id: tenant-123
+  Content-Type: application/json
+  ```
+</Step>
+
+</Steps>
+
+<Note>
+  The package automatically includes `X-Tenant-Id` in cache keys, ensuring tenant isolation without additional configuration.
+</Note>
+
+### Scenario 5: Per-Tenant Cache TTL
+
+**Goal:** Different cache durations for different tenant tiers.
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+
+    /**
+     * Override cache TTL based on tenant
+     */
+    protected function getCacheTTL(string $operation): int
+    {
+        $tenant = request()->header('X-Tenant-Id');
+        $tenantTier = $this->getTenantTier($tenant);
+
+        return match($tenantTier) {
+            'premium' => 600,  // 10 minutes
+            'standard' => 300, // 5 minutes
+            'free' => 60,      // 1 minute
+            default => 300
+        };
+    }
+
+    private function getTenantTier(string $tenantId): string
+    {
+        // Fetch from database or cache
+        return cache()->remember(
+            "tenant:{$tenantId}:tier",
+            3600,
+            fn() => \App\Models\Tenant::find($tenantId)?->tier ?? 'free'
+        );
+    }
+}
+```
+
+## Request-Level Cache Control
+
+### Scenario 6: Bypass Cache for Fresh Data
+
+**Goal:** Disable cache for specific requests that need real-time data.
+
+<CodeGroup>
+
+```http Bypass Cache
+GET /api/v1/products?cache=false
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": ["status|=|active"]
+  }
+}
+```
+
+```json Request Body Alternative
+{
+  "cache": false,
+  "oper": {
+    "and": ["status|=|active"]
+  }
+}
+```
+
+</CodeGroup>
+
+### Scenario 7: Custom TTL Per Request
+
+**Goal:** Override default cache duration for specific queries.
+
+```http
+GET /api/v1/products?cache_ttl=120
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": ["status|=|active"]
+  }
+}
+```
+
+<Note>
+  `cache_ttl` is specified in seconds. This overrides both `REST_CACHE_TTL_LIST` and `REST_CACHE_TTL_ONE` for this specific request.
+</Note>
+
+### Scenario 8: Long-Lived Cache for Static Data
+
+**Goal:** Cache rarely-changing data (categories, settings) for extended periods.
+
+```http
+GET /api/v1/categories?cache_ttl=3600
+Content-Type: application/json
+
+{
+  "select": ["id", "name", "slug"],
+  "oper": {
+    "and": ["active|=|1"]
+  }
+}
+```
+
+## Cache Invalidation
+
+### Scenario 9: Automatic Invalidation on Write
+
+**How it works:** Any create, update, or delete operation automatically bumps the model's cache version, invalidating all cached entries for that model.
+
+<CodeGroup>
+
+```http Update Product
+PUT /api/v1/products/5
+Content-Type: application/json
+
+{
+  "price": 79.99,
+  "stock": 50
+}
+```
+
+```text Cache Invalidation
+✅ Product cache version bumped: v1 → v2
+✅ All product list caches invalidated
+✅ Product #5 show cache invalidated
+✅ Next GET request will fetch fresh data
+```
+
+</CodeGroup>
+
+### Scenario 10: Manual Cache Clear
+
+**Goal:** Clear cache manually when needed (e.g., after bulk imports).
+
+<CodeGroup>
+
+```php In Controller/Service
+use Illuminate\Support\Facades\Cache;
+
+// Clear all package caches
+Cache::tags(['rgc:v1'])->flush();
+
+// Clear specific model caches
+Cache::forget('rgc:v1:product:version');
+```
+
+```bash Artisan Command
+# Clear all caches
+php artisan cache:clear
+
+# Clear Redis cache specifically
+php artisan cache:clear --store=redis
+```
+
+</CodeGroup>
+
+## Performance Optimization
+
+### Scenario 11: Optimizing High-Traffic Endpoints
+
+**Goal:** Maximize cache hit rate for popular product listings.
+
+<Steps>
+
+<Step title="Identify High-Traffic Queries">
+  ```php
+  // Log cache hits/misses
+  Log::channel('cache')->info('Cache hit', [
+      'model' => 'Product',
+      'operation' => 'list',
+      'key' => $cacheKey
+  ]);
+  ```
+</Step>
+
+<Step title="Increase Cache TTL for Popular Endpoints">
+  ```env
+  REST_CACHE_TTL_LIST=900  # 15 minutes for lists
+  REST_CACHE_TTL_ONE=1800  # 30 minutes for single items
+  ```
+</Step>
+
+<Step title="Use Redis with Eviction Policy">
+  Edit `redis.conf`:
+  
+  ```conf
+  maxmemory 2gb
+  maxmemory-policy allkeys-lru
+  ```
+</Step>
+
+<Step title="Monitor Cache Hit Rate">
+  ```bash
+  redis-cli INFO stats | grep hit_rate
+  ```
+</Step>
+
+</Steps>
+
+### Scenario 12: Warming Cache After Deployment
+
+**Goal:** Pre-populate cache with common queries after deployment.
+
+```php
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use App\Services\ProductService;
+
+class WarmCache extends Command
+{
+    protected $signature = 'cache:warm';
+    protected $description = 'Warm up cache with common queries';
+
+    public function handle(ProductService $productService)
+    {
+        $this->info('Warming cache...');
+
+        // Common product queries
+        $queries = [
+            ['oper' => ['and' => ['status|=|active']]],
+            ['oper' => ['and' => ['featured|=|1']]],
+            ['oper' => ['and' => ['status|=|active', 'price|<=|100']]],
+        ];
+
+        foreach ($queries as $query) {
+            $productService->list_all($query);
+            $this->info('Cached: ' . json_encode($query));
+        }
+
+        $this->info('Cache warming complete!');
+    }
+}
+```
+
+## Cache Monitoring
+
+### Scenario 13: Tracking Cache Effectiveness
+
+**Goal:** Monitor cache hit/miss rates to optimize configuration.
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+use Illuminate\Support\Facades\Log;
+
+class ProductService extends BaseService
+{
+    public function list_all($params = [])
+    {
+        $cacheKey = $this->generateCacheKey('list', $params);
+        $cacheExists = cache()->has($cacheKey);
+
+        $result = parent::list_all($params);
+
+        // Log cache metrics
+        Log::channel('metrics')->info('Cache operation', [
+            'model' => 'Product',
+            'operation' => 'list',
+            'cache_hit' => $cacheExists,
+            'ttl' => config('rest-generic-class.cache.ttl_list'),
+            'store' => config('rest-generic-class.cache.store'),
+        ]);
+
+        return $result;
+    }
+}
+```
+
+## Language-Aware Caching
+
+### Scenario 14: Multi-Language Cache Isolation
+
+**Goal:** Separate cache entries for different languages.
+
+```http
+GET /api/v1/products
+Accept-Language: es
+Content-Type: application/json
+
+{
+  "select": ["id", "name", "description"],
+  "oper": {
+    "and": ["status|=|active"]
+  }
+}
+```
+
+<Note>
+  The `Accept-Language` header is automatically included in cache keys, ensuring Spanish and English responses are cached separately.
+</Note>
+
+## Common Caching Patterns
+
+### Scenario 15: Cache Stampede Prevention
+
+**Goal:** Prevent multiple requests from regenerating the same cache simultaneously.
+
+```php
+use Illuminate\Support\Facades\Cache;
+
+// Use Laravel's atomic locks
+$lock = Cache::lock('product:list:' . $cacheKey, 10);
+
+if ($lock->get()) {
+    try {
+        $data = $this->generateExpensiveData();
+        Cache::put($cacheKey, $data, 300);
+    } finally {
+        $lock->release();
+    }
+}
+```
+
+## Configuration Reference
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `REST_CACHE_ENABLED` | `false` | Enable/disable caching |
+| `REST_CACHE_STORE` | `CACHE_STORE` | Cache driver (redis, database, file) |
+| `REST_CACHE_TTL` | `60` | Default TTL in seconds |
+| `REST_CACHE_TTL_LIST` | `60` | TTL for list operations |
+| `REST_CACHE_TTL_ONE` | `60` | TTL for single item operations |
+| `REST_VALIDATION_CACHE_ENABLED` | `true` | Cache validation queries |
+| `REST_VALIDATION_CACHE_TTL` | `3600` | Validation cache TTL |
+
+## Troubleshooting
+
+<Warning>
+  **Cache not invalidating after updates**
+  
+  Ensure write operations go through the BaseService methods (`create`, `update`, `destroy`). Direct Eloquent queries bypass cache invalidation.
+  
+  ❌ Wrong: `Product::where('id', 5)->update(['price' => 99])`
+  
+  ✅ Correct: `$productService->update(5, ['price' => 99])`
+</Warning>
+
+<Warning>
+  **Different cache entries for same query**
+  
+  JSON parameter order affects cache keys. Normalize your client-side requests:
+  
+  ```javascript
+  // Sort keys before sending
+  const params = {
+    oper: { and: [...] },
+    select: [...],
+    relations: [...]
+  };
+  ```
+</Warning>
+
+<Warning>
+  **Queue workers using stale cache**
+  
+  Restart queue workers after cache configuration changes:
+  
+  ```bash
+  php artisan queue:restart
+  ```
+</Warning>
+
+## Next Steps
+
+- Explore [Edge Cases](/examples/edge-cases) for cache-related troubleshooting
+- Review [Configuration Reference](/configuration/overview) for all cache options
+- Learn about [Filtering Scenarios](/examples/filtering-scenarios) for optimizing cacheable queries

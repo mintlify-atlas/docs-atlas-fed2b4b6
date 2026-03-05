@@ -1,0 +1,303 @@
+---
+title: Objectify
+description: Helper class for converting JSON strings to arrays with recursive mapping support
+---
+
+## Overview
+
+The `Objectify` class provides utility methods for converting JSON strings to PHP arrays. It includes support for recursive mapping and handling arrays of JSON strings.
+
+## Class Reference
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\Objectify;
+```
+
+## Methods
+
+### json_mapper()
+
+Decode JSON strings to arrays with optional recursive processing.
+
+```php
+public function json_mapper($value, $recursive = true): mixed
+```
+
+<ParamField path="value" type="mixed" required>
+  The value to process. Can be:
+  - JSON string: Will be decoded to array
+  - Array: Will recursively process each element (if `$recursive` is true)
+  - Other: Returns unchanged
+</ParamField>
+
+<ParamField path="recursive" type="bool" default="true">
+  Whether to recursively process array elements
+</ParamField>
+
+<ResponseField name="return" type="mixed">
+  - Decoded array if input is valid JSON string
+  - Recursively processed array if input is array and `$recursive` is true
+  - Original value if not JSON or array
+</ResponseField>
+
+#### Example Usage
+
+```php
+$objectify = new Objectify();
+
+// Decode single JSON string
+$json = '{"name":"John","age":30}';
+$result = $objectify->json_mapper($json);
+// ['name' => 'John', 'age' => 30]
+
+// Decode array of JSON strings (recursive)
+$jsonArray = [
+    '{"id":1,"name":"John"}',
+    '{"id":2,"name":"Jane"}',
+];
+$result = $objectify->json_mapper($jsonArray, true);
+// [
+//   ['id' => 1, 'name' => 'John'],
+//   ['id' => 2, 'name' => 'Jane']
+// ]
+
+// Without recursion
+$result = $objectify->json_mapper($jsonArray, false);
+// [
+//   '{"id":1,"name":"John"}',  // Not decoded
+//   '{"id":2,"name":"Jane"}'
+// ]
+
+// Non-JSON value returns unchanged
+$result = $objectify->json_mapper('plain text');
+// 'plain text'
+```
+
+---
+
+### json_mapper_norecurse()
+
+Decode JSON strings without recursive processing (alias for `json_mapper()` with `recursive = false`).
+
+```php
+public function json_mapper_norecurse($value): mixed
+```
+
+<ParamField path="value" type="mixed" required>
+  The value to process
+</ParamField>
+
+<ResponseField name="return" type="mixed">
+  Decoded value without recursive array processing
+</ResponseField>
+
+#### Example Usage
+
+```php
+$objectify = new Objectify();
+
+$json = '{"name":"John","age":30}';
+$result = $objectify->json_mapper_norecurse($json);
+// ['name' => 'John', 'age' => 30]
+
+// Arrays won't be recursively processed
+$jsonArray = [
+    '{"id":1}',
+    '{"id":2}'
+];
+$result = $objectify->json_mapper_norecurse($jsonArray);
+// ['{"id":1}', '{"id":2}']  // JSON strings remain as strings
+```
+
+---
+
+### json_to_array()
+
+Convert JSON strings in an array to decoded arrays with optional recursive processing.
+
+```php
+public function json_to_array($array, $recursive = true): array
+```
+
+<ParamField path="array" type="mixed" required>
+  Array to process. If not an array, it will be converted to a single-element array
+</ParamField>
+
+<ParamField path="recursive" type="bool" default="true">
+  Whether to recursively process nested elements
+</ParamField>
+
+<ResponseField name="return" type="array">
+  Array with JSON strings decoded to arrays
+</ResponseField>
+
+#### Example Usage
+
+```php
+$objectify = new Objectify();
+
+// Process array of JSON strings
+$data = [
+    '{"id":1,"name":"Product A"}',
+    '{"id":2,"name":"Product B"}',
+];
+$result = $objectify->json_to_array($data);
+// [
+//   ['id' => 1, 'name' => 'Product A'],
+//   ['id' => 2, 'name' => 'Product B']
+// ]
+
+// Non-array input is converted to array
+$json = '{"name":"John"}';
+$result = $objectify->json_to_array($json);
+// [['name' => 'John']]
+
+// Without recursion
+$data = [
+    '{"id":1}',
+    '{"id":2}'
+];
+$result = $objectify->json_to_array($data, false);
+// JSON strings won't be decoded
+```
+
+---
+
+## Use Cases
+
+### Processing API Responses
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\Objectify;
+
+$objectify = new Objectify();
+
+// API returns JSON string in database field
+$users = DB::table('users')->get();
+
+foreach ($users as $user) {
+    // metadata field contains JSON string
+    $user->metadata = $objectify->json_mapper($user->metadata);
+}
+
+// Now metadata is an array instead of JSON string
+```
+
+### Batch Processing JSON Data
+
+```php
+$objectify = new Objectify();
+
+// Array of JSON strings from external source
+$jsonStrings = [
+    '{"order_id":1,"total":99.99}',
+    '{"order_id":2,"total":149.99}',
+    '{"order_id":3,"total":79.99}',
+];
+
+$orders = $objectify->json_to_array($jsonStrings);
+
+foreach ($orders as $order) {
+    echo "Order #{$order['order_id']}: ${$order['total']}\n";
+}
+// Order #1: $99.99
+// Order #2: $149.99
+// Order #3: $79.99
+```
+
+### Handling Nested JSON
+
+```php
+$objectify = new Objectify();
+
+// Nested JSON strings
+$data = [
+    'user' => '{"name":"John","email":"john@example.com"}',
+    'settings' => '{"theme":"dark","notifications":true}',
+];
+
+// Map all values
+$decoded = array_map(
+    [$objectify, 'json_mapper'],
+    $data
+);
+
+// Result:
+// [
+//   'user' => ['name' => 'John', 'email' => 'john@example.com'],
+//   'settings' => ['theme' => 'dark', 'notifications' => true]
+// ]
+```
+
+---
+
+## Complete Example
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\Objectify;
+
+class ProductController extends Controller
+{
+    public function index()
+    {
+        $objectify = new Objectify();
+        
+        // Get products with JSON attributes field
+        $products = DB::table('products')
+            ->select('id', 'name', 'attributes')
+            ->get();
+        
+        // Decode JSON attributes for each product
+        $products = $products->map(function ($product) use ($objectify) {
+            $product->attributes = $objectify->json_mapper($product->attributes);
+            return $product;
+        });
+        
+        return response()->json($products);
+    }
+    
+    public function bulkImport(Request $request)
+    {
+        $objectify = new Objectify();
+        
+        // Request contains array of JSON strings
+        $jsonData = $request->input('products');
+        // [
+        //   '{"name":"Product A","price":19.99}',
+        //   '{"name":"Product B","price":29.99}'
+        // ]
+        
+        // Convert all to arrays
+        $products = $objectify->json_to_array($jsonData);
+        
+        // Insert into database
+        foreach ($products as $product) {
+            Product::create($product);
+        }
+        
+        return response()->json([
+            'message' => 'Products imported successfully',
+            'count' => count($products)
+        ]);
+    }
+}
+```
+
+---
+
+## Notes
+
+<Note>
+  The `json_mapper()` method will return the original value unchanged if:
+  - The value is not a string
+  - The string is not valid JSON
+  - JSON decoding fails
+</Note>
+
+<Warning>
+  When using `json_to_array()`, if the input is not an array, it will be wrapped in an array first. This means a single JSON string will become an array containing the decoded data.
+</Warning>
+
+<Tip>
+  Use `json_mapper_norecurse()` when you have a mixed array where only top-level JSON strings should be decoded, and nested structures should remain unchanged.
+</Tip>

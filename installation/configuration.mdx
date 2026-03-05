@@ -1,0 +1,382 @@
+---
+title: "Initial Configuration"
+description: "Configure Rest Generic Class package for your Laravel application"
+---
+
+## Publishing the Configuration File
+
+While the package works with default settings, publishing the configuration file gives you full control over its behavior.
+
+<Steps>
+
+<Step title="Publish the config file">
+
+Run the publish command:
+
+```bash
+php artisan vendor:publish --tag=rest-generic-class-config
+```
+
+This creates `config/rest-generic-class.php` in your application.
+
+</Step>
+
+<Step title="Review the configuration">
+
+Open the published config file to see all available options:
+
+```bash
+php artisan config:show rest-generic-class
+```
+
+</Step>
+
+<Step title="Set environment variables">
+
+Add environment-specific values to your `.env` file (see sections below).
+
+</Step>
+
+<Step title="Clear config cache">
+
+If you're using config caching, clear it after making changes:
+
+```bash
+php artisan config:clear
+```
+
+<Warning>
+  Config caching (`php artisan config:cache`) will ignore `.env` changes until you clear the cache. Always run `php artisan config:clear` when testing configuration changes.
+</Warning>
+
+</Step>
+
+</Steps>
+
+## Configuration Structure
+
+The config file is organized into logical sections:
+
+### Logging Configuration
+
+```php config/rest-generic-class.php
+'logging' => [
+    'rest-generic-class' => [
+        'driver' => 'single',
+        'path' => storage_path('logs/rest-generic-class.log'),
+        'level' => env('LOG_LEVEL', 'debug'),
+    ],
+    'query' => env('LOG_QUERY', false),
+],
+```
+
+Controls logging behavior for debugging and monitoring:
+
+- **driver**: Log channel driver (single, daily, stack, etc.)
+- **path**: Where log files are stored
+- **level**: Minimum log level (debug, info, warning, error)
+- **query**: Whether to log database queries (useful for performance debugging)
+
+### Filtering Configuration
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'max_depth' => 5,
+    'max_conditions' => 100,
+    'strict_relations' => true,
+    'allowed_operators' => ['=', '!=', '<', '>', '<=', '>=', 'like', /*...*/],
+    'validate_columns' => env('REST_VALIDATE_COLUMNS', true),
+    'strict_column_validation' => env('REST_STRICT_COLUMNS', true),
+    'column_cache_ttl' => 3600,
+],
+```
+
+Defines rules for dynamic filtering and query building:
+
+- **max_depth**: Maximum relation nesting depth (prevents infinite recursion)
+- **max_conditions**: Maximum filter conditions per request (prevents query overload)
+- **strict_relations**: Whether to validate relation names against model definitions
+- **allowed_operators**: SQL operators permitted in filters
+- **validate_columns**: Check if columns exist before querying
+- **column_cache_ttl**: Cache column lists for performance (in seconds)
+
+### Validation Configuration
+
+```php config/rest-generic-class.php
+'validation' => [
+    'cache_enabled' => env('REST_VALIDATION_CACHE_ENABLED', true),
+    'cache_ttl' => (int)env('REST_VALIDATION_CACHE_TTL', 3600),
+    'cache_prefix' => env('REST_VALIDATION_CACHE_PREFIX', 'validation'),
+    'connection' => env('REST_VALIDATION_CONNECTION', 'db'),
+],
+```
+
+Controls validation caching for improved performance:
+
+- **cache_enabled**: Whether to cache validation rules
+- **cache_ttl**: How long to cache validation rules (in seconds)
+- **cache_prefix**: Prefix for validation cache keys
+- **connection**: Database connection to use for validation queries
+
+### Cache Configuration
+
+```php config/rest-generic-class.php
+'cache' => [
+    'enabled' => env('REST_CACHE_ENABLED', false),
+    'store' => env('REST_CACHE_STORE', env('CACHE_STORE')),
+    'ttl' => (int)env('REST_CACHE_TTL', 60),
+    'ttl_by_method' => [
+        'list_all' => (int)env('REST_CACHE_TTL_LIST', 60),
+        'get_one' => (int)env('REST_CACHE_TTL_ONE', 30),
+    ],
+    'cacheable_methods' => ['list_all', 'get_one'],
+    'vary' => [
+        'headers' => ['Accept-Language', 'X-Tenant-Id'],
+    ],
+],
+```
+
+Configures response caching strategy:
+
+- **enabled**: Master switch for caching (false by default)
+- **store**: Cache store to use (redis, database, file, memcached, etc.)
+- **ttl**: Default cache TTL in seconds
+- **ttl_by_method**: Method-specific TTL overrides
+- **cacheable_methods**: Which service methods should be cached
+- **vary**: Headers to include in cache key (for multi-tenancy, localization)
+
+## Environment Variables
+
+Add these variables to your `.env` file to customize behavior:
+
+### Basic Configuration
+
+```bash .env
+# Logging
+LOG_LEVEL=debug
+LOG_QUERY=false
+
+# Filtering
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+```
+
+<Note>
+  Set `LOG_QUERY=true` during development to debug slow queries, but disable it in production for performance.
+</Note>
+
+### Caching Configuration
+
+```bash .env
+# Cache settings
+REST_CACHE_ENABLED=false
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=60
+REST_CACHE_TTL_LIST=120
+REST_CACHE_TTL_ONE=60
+
+# Validation cache
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=3600
+REST_VALIDATION_CACHE_PREFIX=validation
+REST_VALIDATION_CONNECTION=db
+```
+
+<Warning>
+  Enable caching (`REST_CACHE_ENABLED=true`) only after configuring a proper cache store like Redis. File-based caching is not recommended for production.
+</Warning>
+
+### Production Configuration
+
+Recommended settings for production environments:
+
+```bash .env (Production)
+# Logging (reduce verbosity)
+LOG_LEVEL=error
+LOG_QUERY=false
+
+# Caching (enable with Redis)
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=300
+REST_CACHE_TTL_LIST=300
+REST_CACHE_TTL_ONE=120
+
+# Validation (enable caching)
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=7200
+
+# Strict validation
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+```
+
+### Development Configuration
+
+Recommended settings for local development:
+
+```bash .env (Development)
+# Logging (verbose for debugging)
+LOG_LEVEL=debug
+LOG_QUERY=true
+
+# Caching (disabled for immediate feedback)
+REST_CACHE_ENABLED=false
+
+# Validation (relaxed for testing)
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=false
+```
+
+## Testing Your Configuration
+
+Verify your configuration is loaded correctly:
+
+<CodeGroup>
+
+```bash Artisan
+php artisan tinker
+```
+
+```php Tinker
+>>> config('rest-generic-class.cache.enabled');
+=> false
+
+>>> config('rest-generic-class.filtering.max_depth');
+=> 5
+
+>>> config('rest-generic-class.logging.query');
+=> false
+```
+
+</CodeGroup>
+
+## Cache Store Setup
+
+To use Redis for caching (recommended for production):
+
+<Steps>
+
+<Step title="Install Redis PHP extension">
+
+```bash
+# Using PECL
+pecl install redis
+
+# Or via package manager (Ubuntu/Debian)
+sudo apt-get install php-redis
+```
+
+</Step>
+
+<Step title="Configure Redis in Laravel">
+
+Ensure Redis is configured in `config/database.php`:
+
+```php config/database.php
+'redis' => [
+    'client' => env('REDIS_CLIENT', 'phpredis'),
+    'default' => [
+        'host' => env('REDIS_HOST', '127.0.0.1'),
+        'password' => env('REDIS_PASSWORD'),
+        'port' => env('REDIS_PORT', 6379),
+        'database' => env('REDIS_DB', 0),
+    ],
+],
+```
+
+</Step>
+
+<Step title="Set cache driver in .env">
+
+```bash .env
+CACHE_STORE=redis
+REST_CACHE_STORE=redis
+REST_CACHE_ENABLED=true
+```
+
+</Step>
+
+<Step title="Test Redis connection">
+
+```bash
+php artisan tinker
+```
+
+```php
+>>> Cache::store('redis')->put('test', 'value', 60);
+=> true
+
+>>> Cache::store('redis')->get('test');
+=> "value"
+```
+
+</Step>
+
+</Steps>
+
+## Logging Setup
+
+The package automatically registers a logging channel. View logs:
+
+```bash
+# Watch logs in real-time
+tail -f storage/logs/rest-generic-class.log
+
+# View recent errors
+grep ERROR storage/logs/rest-generic-class.log
+```
+
+<Note>
+  The logging channel is automatically registered by the service provider. You don't need to manually add it to `config/logging.php`.
+</Note>
+
+## Configuration Best Practices
+
+<Warning>
+  **Never commit sensitive values**: Keep `.env` out of version control. Use `.env.example` for documentation.
+</Warning>
+
+### Performance Optimization
+
+1. **Enable caching** in production with Redis
+2. **Increase TTL** for rarely-changing data
+3. **Disable query logging** in production
+4. **Use column validation caching** to reduce database calls
+
+### Security Considerations
+
+1. **Enable strict column validation** to prevent SQL injection risks
+2. **Limit max_conditions** to prevent DoS attacks
+3. **Set appropriate max_depth** to prevent infinite recursion
+4. **Validate relations strictly** in production
+
+### Multi-tenancy Support
+
+If you're building a multi-tenant application:
+
+```php config/rest-generic-class.php
+'cache' => [
+    'vary' => [
+        'headers' => [
+            'Accept-Language',  // For localization
+            'X-Tenant-Id',      // For multi-tenancy
+            'X-Company-Id',     // Custom tenant identifier
+        ],
+    ],
+],
+```
+
+This ensures cached responses are isolated per tenant.
+
+## Next Steps
+
+With configuration complete, you're ready to:
+
+1. [Create your first RESTful resource](/quickstart) with BaseModel, BaseService, and RestController
+2. [Learn about filtering](/core/filtering) to leverage dynamic query capabilities
+3. [Explore caching strategies](/guides/caching) for optimal performance
+
+<Note>
+  You can always modify configuration later. Start with defaults and adjust based on your application's needs.
+</Note>

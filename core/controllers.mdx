@@ -1,0 +1,613 @@
+---
+title: RestController Class
+description: Set up REST endpoints with automatic request processing, error handling, and CRUD operations
+---
+
+## Overview
+
+The `RestController` class provides a complete REST API interface with minimal configuration. It handles:
+
+- **Request parameter processing** (select, relations, oper, pagination, etc.)
+- **Standard CRUD endpoints** (index, show, store, update, destroy)
+- **Validation integration** via FormRequest classes
+- **Database error handling** with user-friendly messages
+- **Transaction management** for write operations
+- **Export endpoints** for Excel and PDF
+
+## Controller Setup
+
+Create a controller by extending `RestController`:
+
+```php
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+use App\Services\ProductService;
+use App\Models\Product;
+
+class ProductController extends RestController
+{
+    protected BaseModel|string $modelClass = Product::class;
+    protected BaseService|string $service;
+    
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+}
+```
+
+That's it! Your controller now has all REST endpoints.
+
+## Route Registration
+
+Register the controller in your routes file:
+
+```php
+use App\Http\Controllers\ProductController;
+
+Route::prefix('api/v1')->group(function () {
+    Route::get('/products', [ProductController::class, 'index']);
+    Route::get('/products/get-one', [ProductController::class, 'getOne']);
+    Route::post('/products', [ProductController::class, 'store']);
+    Route::get('/products/{id}', [ProductController::class, 'show']);
+    Route::put('/products/{id}', [ProductController::class, 'update']);
+    Route::delete('/products/{id}', [ProductController::class, 'destroy']);
+    
+    // Optional: bulk operations
+    Route::put('/products/bulk', [ProductController::class, 'updateMultiple']);
+    Route::delete('/products/bulk', [ProductController::class, 'deleteById']);
+    
+    // Optional: exports
+    Route::get('/products/export/excel', [ProductController::class, 'export_excel']);
+    Route::get('/products/export/pdf', [ProductController::class, 'export_pdf']);
+});
+```
+
+Or use resource routing:
+
+```php
+Route::apiResource('products', ProductController::class);
+```
+
+## Available Endpoints
+
+### index() — List Records
+
+Retrieves a paginated list of records with filtering, relations, and sorting.
+
+```php
+public function index(Request $request): LengthAwarePaginator|array|CursorPaginator
+```
+
+**Request example:**
+
+```http
+GET /api/v1/products?select=["id","name","price"]&relations=["category:id,name"]&oper={"and":["status|=|active"]}&pagination={"page":1,"pageSize":25}
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "price": 29.99,
+      "category": {
+        "id": 5,
+        "name": "Electronics"
+      }
+    }
+  ]
+}
+```
+
+Or with pagination:
+
+```json
+{
+  "current_page": 1,
+  "data": [...],
+  "per_page": 25,
+  "total": 150
+}
+```
+
+### getOne() — Get Single Record by Query
+
+Retrieves the first record matching the query parameters.
+
+```php
+public function getOne(Request $request): array
+```
+
+**Request example:**
+
+```http
+GET /api/v1/products/get-one?oper={"and":["sku|=|ABC123"]}&relations=["category"]
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "id": 1,
+    "name": "Wireless Mouse",
+    "sku": "ABC123",
+    "category": {...}
+  }
+}
+```
+
+### show() — Get Record by ID
+
+Retrieves a single record by its primary key.
+
+```php
+public function show(Request $request, $id): mixed
+```
+
+**Request example:**
+
+```http
+GET /api/v1/products/123?relations=["category","reviews"]&select=["id","name","price"]
+```
+
+**Response:**
+
+```json
+{
+  "id": 123,
+  "name": "Wireless Mouse",
+  "price": 29.99,
+  "category": {...},
+  "reviews": [...]
+}
+```
+
+<Note>
+`show()` supports the same `relations`, `select`, and `hierarchy` parameters as `index()`.
+</Note>
+
+### store() — Create Record
+
+Creates a new record with validation.
+
+```php
+public function store(BaseFormRequest $request): array
+```
+
+**Request example:**
+
+```http
+POST /api/v1/products
+Content-Type: application/json
+
+{
+  "name": "Wireless Mouse",
+  "price": 29.99,
+  "stock": 100,
+  "category_id": 5
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 124,
+    "name": "Wireless Mouse",
+    "price": 29.99,
+    "stock": 100,
+    "category_id": 5,
+    "created_at": "2024-03-15T10:30:00Z",
+    "updated_at": "2024-03-15T10:30:00Z"
+  }
+}
+```
+
+**Batch creation:**
+
+```json
+{
+  "product": [
+    {"name": "Item 1", "price": 10},
+    {"name": "Item 2", "price": 20}
+  ]
+}
+```
+
+<Warning>
+The key name (`product`) must match your model's `const MODEL` value.
+</Warning>
+
+### update() — Update Record
+
+Updates an existing record by ID.
+
+```php
+public function update(Request $request, $id): mixed
+```
+
+**Request example:**
+
+```http
+PUT /api/v1/products/123
+Content-Type: application/json
+
+{
+  "price": 24.99,
+  "stock": 85
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 123,
+    "name": "Wireless Mouse",
+    "price": 24.99,
+    "stock": 85,
+    "updated_at": "2024-03-15T11:00:00Z"
+  }
+}
+```
+
+**Partial updates** are supported — only send the fields you want to change.
+
+### destroy() — Delete Record
+
+Deletes a record by ID.
+
+```php
+public function destroy($id): array
+```
+
+**Request example:**
+
+```http
+DELETE /api/v1/products/123
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 123,
+    "name": "Wireless Mouse",
+    "deleted_at": "2024-03-15T11:30:00Z"
+  }
+}
+```
+
+## Request Processing
+
+The `process_request()` method extracts and normalizes query parameters.
+
+From **RestController.php:79-102**:
+
+```php
+public function process_request(Request $request): array
+{
+    $parameters = [];
+    $payloads = array_merge($request->query(), $request->request->all());
+    
+    // Extract all supported parameters
+    $parameters['relations'] = $request['relations'] ?? null;
+    $parameters['_nested'] = $request['_nested'] ?? false;
+    $parameters['soft_delete'] = $request['soft_delete'] ?? null;
+    
+    // Merge attr and eq parameters (legacy support)
+    if (array_key_exists('attr', $payloads) && array_key_exists('eq', $payloads)) {
+        $parameters['attr'] = array_merge(
+            (array)$request['attr'],
+            (array)$request['eq']
+        );
+    } elseif (array_key_exists('attr', $payloads)) {
+        $parameters['attr'] = $request['attr'];
+    } elseif (array_key_exists('eq', $payloads)) {
+        $parameters['attr'] = $request['eq'];
+    } else {
+        $parameters['attr'] = null;
+    }
+    
+    $parameters['select'] = $request['select'] ?? "*";
+    $parameters['pagination'] = $request['pagination'] ?? null;
+    $parameters['orderby'] = $request['orderby'] ?? null;
+    $parameters['oper'] = $request['oper'] ?? null;
+    $parameters['hierarchy'] = $request['hierarchy'] ?? null;
+    
+    return $parameters;
+}
+```
+
+### Supported Parameters
+
+<ParamField path="select" type="array|string">
+  Columns to return. Example: `["id","name","price"]` or `"*"`
+</ParamField>
+
+<ParamField path="relations" type="array">
+  Relations to eager load. Example: `["category:id,name","reviews"]`
+</ParamField>
+
+<ParamField path="oper" type="object|array">
+  Dynamic filters. Example: `{"and":["status|=|active"]}`
+</ParamField>
+
+<ParamField path="orderby" type="array">
+  Sorting rules. Example: `[{"price":"desc"},{"name":"asc"}]`
+</ParamField>
+
+<ParamField path="pagination" type="object">
+  Page settings. Example: `{"page":1,"pageSize":25}`
+</ParamField>
+
+<ParamField path="hierarchy" type="bool|object">
+  Hierarchical mode. Example: `true` or `{"filter_mode":"with_descendants","max_depth":3}`
+</ParamField>
+
+<ParamField path="_nested" type="bool" default="false">
+  Apply relation filters to eager loads.
+</ParamField>
+
+<ParamField path="attr" type="object">
+  Legacy equality filters. Example: `{"status":"active","category_id":5}`
+</ParamField>
+
+## Error Handling
+
+RestController includes automatic database error handling via `DatabaseErrorParser`.
+
+From **RestController.php:58-72**:
+
+```php
+protected function handleDatabaseException(\Throwable $e): DatabaseErrorParserException
+{
+    // Parse the error
+    $parsedError = DatabaseErrorParser::parse($e);
+    
+    // Log the full error for debugging
+    Log::channel('rest-generic-class')->error('Database error occurred', [
+        'parsed' => $parsedError,
+        'exception' => $e,
+        'trace' => $e->getTraceAsString(),
+    ]);
+    
+    // Return user-friendly exception
+    return DatabaseErrorParser::toExceptionError($parsedError);
+}
+```
+
+### Error Types
+
+The parser detects and translates common database errors:
+
+- **Foreign key constraint violations** → "Cannot delete: record is referenced by other records"
+- **Unique constraint violations** → "Duplicate value for field 'email'"
+- **Not null violations** → "Field 'name' is required"
+- **Connection errors** → "Database connection failed"
+
+**Example error response:**
+
+```json
+{
+  "message": "Foreign key constraint violation",
+  "details": "Cannot delete product: referenced by 5 orders",
+  "constraint": "orders_product_id_foreign",
+  "table": "products"
+}
+```
+
+## Transaction Management
+
+Write operations automatically use database transactions.
+
+From **RestController.php:158-176** (store method):
+
+```php
+public function store(BaseFormRequest $request): array
+{
+    DB::beginTransaction();
+    try {
+        $params = count($request->all()) != 0
+            ? $request->all()
+            : json_decode($request->getContent(), true) ?? [];
+        
+        $result = $this->service->create($params);
+        
+        if ($result['success'])
+            DB::commit();
+    } catch (\Throwable $e) {
+        DB::rollBack();
+        Log::channel('rest-generic-class')->error('Store failed', [
+            'controller' => static::class,
+            'method' => __FUNCTION__,
+            'exception' => $e,
+        ]);
+        throw $e;
+    }
+    return $result;
+}
+```
+
+All write operations (`store`, `update`, `updateMultiple`, `destroy`) follow this pattern:
+
+1. Begin transaction
+2. Execute operation
+3. Commit if successful
+4. Rollback on error
+5. Log failures
+
+## Validation Integration
+
+Use `BaseFormRequest` for custom validation:
+
+```php
+use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+
+class StoreProductRequest extends BaseFormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'stock' => 'required|integer|min:0',
+            'category_id' => 'required|exists:categories,id',
+            'status' => 'in:draft,active,archived',
+        ];
+    }
+}
+```
+
+Update your controller:
+
+```php
+use App\Http\Requests\StoreProductRequest;
+
+class ProductController extends RestController
+{
+    public function store(StoreProductRequest $request): array
+    {
+        return parent::store($request);
+    }
+}
+```
+
+Now validation runs automatically before `store()` executes.
+
+## Bulk Operations
+
+### updateMultiple()
+
+Update multiple records in one request.
+
+```php
+public function updateMultiple(Request $request): mixed
+```
+
+**Request example:**
+
+```http
+PUT /api/v1/products/bulk
+Content-Type: application/json
+
+{
+  "product": [
+    {"id": 1, "stock": 100},
+    {"id": 2, "stock": 50},
+    {"id": 3, "stock": 75}
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "models": [
+    {"success": true, "model": {...}},
+    {"success": true, "model": {...}},
+    {"success": true, "model": {...}}
+  ]
+}
+```
+
+### deleteById()
+
+Delete multiple records by IDs.
+
+```php
+public function deleteById(Request $request): array
+```
+
+**Request example:**
+
+```http
+DELETE /api/v1/products/bulk
+Content-Type: application/json
+
+[1, 2, 3]
+```
+
+## Export Endpoints
+
+### export_excel()
+
+```http
+GET /api/v1/products/export/excel?columns=["name","price","stock"]&oper={"and":["status|=|active"]}&filename=products.xlsx
+```
+
+Returns an Excel file download.
+
+### export_pdf()
+
+```http
+GET /api/v1/products/export/pdf?columns=["name","price"]&template=reports.products&filename=products.pdf
+```
+
+Returns a PDF file download using the specified Blade template.
+
+## Complete Example
+
+```php
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+use App\Services\ProductService;
+use App\Models\Product;
+use App\Http\Requests\StoreProductRequest;
+use App\Http\Requests\UpdateProductRequest;
+
+class ProductController extends RestController
+{
+    protected BaseModel|string $modelClass = Product::class;
+    protected BaseService|string $service;
+    
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+        
+        // Optional: Apply middleware
+        $this->middleware('auth:api');
+        $this->middleware('role:admin')->only(['destroy', 'updateMultiple']);
+    }
+    
+    // Override store with custom validation
+    public function store(StoreProductRequest $request): array
+    {
+        return parent::store($request);
+    }
+    
+    // Override update with custom validation
+    public function update(UpdateProductRequest $request, $id): mixed
+    {
+        return parent::update($request, $id);
+    }
+    
+    // Add custom endpoint
+    public function featured(Request $request)
+    {
+        $params = $this->process_request($request);
+        $params['oper'] = ['and' => ['featured|=|1', 'status|=|active']];
+        $params['orderby'] = [['created_at' => 'desc']];
+        $params['pagination'] = ['page' => 1, 'pageSize' => 10];
+        
+        return $this->service->list_all($params);
+    }
+}
+```
+
+## Next Steps
+
+- [Dynamic Filtering](/core/filtering) — Master the `oper` parameter
+- [Relation Loading](/core/relations) — Advanced eager loading
+- [Hierarchical Data](/core/hierarchy) — Work with tree structures

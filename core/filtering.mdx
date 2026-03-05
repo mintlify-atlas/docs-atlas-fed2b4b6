@@ -1,0 +1,358 @@
+---
+title: Dynamic Filtering System
+description: Learn how to use the powerful dynamic filtering system with complex conditions, nested logic, and multiple operators
+---
+
+## Overview
+
+Rest Generic Class provides a flexible dynamic filtering system that allows clients to build complex queries using the `oper` parameter. The system supports:
+
+- Multiple comparison operators (equality, range, pattern matching)
+- Logical grouping with `and`/`or` conditions
+- Nested filter structures for advanced queries
+- Automatic table prefixing to avoid column ambiguity
+- Database-specific features (PostgreSQL `ilike`, unaccent)
+
+## Basic Filter Structure
+
+Filters are passed via the `oper` query parameter as a JSON object with logical operators:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>|100"
+    ]
+  }
+}
+```
+
+Each condition follows the format: `field|operator|value`
+
+## Supported Operators
+
+The filtering system supports a comprehensive set of operators:
+
+### Comparison Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `=` | Equals | `status\|=\|active` |
+| `!=`, `<>` | Not equals | `status\|!=\|deleted` |
+| `<` | Less than | `price\|<\|100` |
+| `>` | Greater than | `price\|>\|50` |
+| `<=` | Less than or equal | `stock\|<=\|10` |
+| `>=` | Greater than or equal | `quantity\|>=\|5` |
+
+### Pattern Matching
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `like` | Case-sensitive pattern | `name\|like\|%John%` |
+| `not like` | Negated pattern | `email\|not like\|%test%` |
+| `ilike` | Case-insensitive (PostgreSQL) | `title\|ilike\|%search%` |
+| `not ilike` | Negated case-insensitive | `description\|not ilike\|%draft%` |
+| `ilikeu` | With unaccent (PostgreSQL) | `name\|ilikeu\|Jose` (matches José) |
+| `regexp` | Regular expression | `code\|regexp\|^[A-Z]{3}` |
+| `not regexp` | Negated regex | `code\|not regexp\|[0-9]` |
+
+### List Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `in` | Value in list | `status\|in\|active,pending` |
+| `not in`, `notin` | Value not in list | `role\|not in\|admin,superadmin` |
+
+### Range Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `between` | Value between two values | `price\|between\|10,100` |
+| `not between`, `notbetween` | Value outside range | `age\|not between\|18,65` |
+
+### Null Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `null` | Field is NULL | `deleted_at\|null\|` |
+| `not null`, `notnull` | Field is not NULL | `email_verified_at\|not null\|` |
+
+### Date Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `date` | Date equals | `created_at\|date\|2024-03-05` |
+| `not date`, `notdate` | Date not equals | `updated_at\|not date\|2024-01-01` |
+
+### Existence Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `exists` | Subquery exists | `user_id\|exists\|users.id` |
+| `not exists`, `notexists` | Subquery not exists | `parent_id\|not exists\|categories.id` |
+
+## Logical Operators
+
+### AND Conditions
+
+All conditions must be true:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>|100",
+      "stock|>=|1"
+    ]
+  }
+}
+```
+
+### OR Conditions
+
+At least one condition must be true:
+
+```json
+{
+  "oper": {
+    "or": [
+      "category_id|=|1",
+      "category_id|=|2",
+      "featured|=|true"
+    ]
+  }
+}
+```
+
+### Nested Conditions
+
+Combine AND/OR logic for complex queries:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      {
+        "or": [
+          "priority|=|high",
+          "urgent|=|true"
+        ]
+      }
+    ]
+  }
+}
+```
+
+This creates SQL equivalent to:
+```sql
+WHERE status = 'active' AND (priority = 'high' OR urgent = true)
+```
+
+## Value Types
+
+The filter system automatically decodes values:
+
+```php
+// Strings
+"name|=|John"        // 'John'
+
+// Numbers
+"price|>|99.99"      // 99.99
+
+// Booleans
+"active|=|true"      // true
+"deleted|=|false"    // false
+
+// Null
+"parent_id|=|null"   // null
+
+// Arrays (comma-separated)
+"id|in|1,2,3"        // [1, 2, 3]
+"tags|in|red,blue"   // ['red', 'blue']
+```
+
+## Configuration
+
+Configure filtering behavior in `config/rest-generic-class.php`:
+
+```php
+'filtering' => [
+    // Maximum nesting depth for complex filters
+    'max_depth' => 5,
+    
+    // Maximum number of conditions per request
+    'max_conditions' => 100,
+    
+    // Enforce relation allowlist
+    'strict_relations' => true,
+    
+    // Allowed operators (customize as needed)
+    'allowed_operators' => [
+        '=', '!=', '<', '>', '<=', '>=',
+        'like', 'not like', 'ilike', 'not ilike',
+        'in', 'not in', 'between', 'not between',
+        'null', 'not null', 'exists', 'not exists',
+        'date', 'not date'
+    ],
+    
+    // Validate column names against model fillable/table
+    'validate_columns' => env('REST_VALIDATE_COLUMNS', true),
+    
+    // Strict mode throws errors for invalid columns
+    'strict_column_validation' => env('REST_STRICT_COLUMNS', true),
+    
+    // Cache column lists for performance
+    'column_cache_ttl' => 3600,
+],
+```
+
+## HasDynamicFilter Trait
+
+The filtering logic is implemented in the `HasDynamicFilter` trait, which provides:
+
+### scopeWithFilters
+
+Apply filters to an Eloquent query:
+
+```php
+use Ronu\RestGenericClass\Core\Traits\HasDynamicFilter;
+
+class Product extends Model
+{
+    use HasDynamicFilter;
+}
+
+// In your controller or service
+$query = Product::query();
+$filters = [
+    'and' => [
+        'status|=|active',
+        'price|>|100'
+    ]
+];
+
+$results = $query->withFilters($filters)->get();
+```
+
+### Key Methods
+
+```php
+/**
+ * Apply dynamic filters to query builder
+ * 
+ * @param Builder $query
+ * @param array $params Filter structure
+ * @param string $condition 'and' or 'or'
+ * @param mixed $model Model instance for table prefixing
+ * @return Builder
+ */
+public function scopeWithFilters($query, array $params, string $condition = 'and', $model = null)
+```
+
+## Advanced Examples
+
+### Search with Multiple Conditions
+
+```http
+GET /api/products?oper={"and":["status|=|active","category_id|in|1,2,3","price|between|50,200"]}
+```
+
+### Complex Business Logic
+
+Find active products that are either featured OR low in stock:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      {
+        "or": [
+          "featured|=|true",
+          "stock|<=|5"
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Pattern Matching Search
+
+```json
+{
+  "oper": {
+    "or": [
+      "name|ilike|%search term%",
+      "description|ilike|%search term%",
+      "sku|like|%SEARCH%"
+    ]
+  }
+}
+```
+
+### Date Range Filtering
+
+```json
+{
+  "oper": {
+    "and": [
+      "created_at|>=|2024-01-01",
+      "created_at|<|2024-12-31",
+      "status|not in|draft,deleted"
+    ]
+  }
+}
+```
+
+## Security Considerations
+
+<Warning>
+The filtering system includes several protections:
+
+- **Operator allowlist** prevents SQL injection via invalid operators
+- **Column validation** ensures only valid table columns are queried
+- **Max depth/conditions** prevents DoS attacks with overly complex queries
+- **Prepared statements** all values are properly escaped
+- **Relation restrictions** only declared relations can be queried
+</Warning>
+
+## Performance Tips
+
+1. **Index filtered columns**: Add database indexes to commonly filtered fields
+2. **Limit nesting depth**: Keep filter structures simple when possible
+3. **Use specific operators**: `=` is faster than `like`
+4. **Avoid leading wildcards**: `name|like|%term` is slower than `name|like|term%`
+5. **Enable column caching**: Reduces validation overhead
+
+## Error Handling
+
+Common filtering errors:
+
+```php
+// Invalid operator
+"field|invalid|value"  
+// Throws: "The invalid value is not a valid operator"
+
+// Invalid format
+"field-operator-value"  
+// Throws: "Invalid condition format: expected 'field|operator|value'"
+
+// Wrong condition type
+{"oper": "string"}  
+// Throws: "Invalid condition format: expected a string like 'field|operator|value'"
+
+// Unsupported logical key
+{"oper": {"xor": [...]}}  
+// Throws: "Unsupported logical key 'xor'. Only 'and' and 'or' are allowed."
+```
+
+## Related Documentation
+
+- [Relation Loading](/core/relations) - Filter on related models
+- [HasDynamicFilter Trait](/api/traits/has-dynamic-filter) - Trait API reference
+- [Advanced Filtering Guide](/guides/advanced-filtering) - Detailed examples
+- [Configuration](/configuration/overview) - Filtering configuration options

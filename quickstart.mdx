@@ -1,80 +1,594 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Build your first REST API with Rest Generic Class in 5 minutes - complete step-by-step guide with a working Product API example
 ---
 
-## Get started in three steps
+# Quick Start
 
-Get your documentation site running locally and make your first customization.
+This guide walks you through building a complete REST API for a Product resource in under 5 minutes. By the end, you'll have a fully functional API with filtering, pagination, and relation loading.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+- PHP 8.0 or higher
+- Laravel 12.x
+- Composer
+
+## Installation
+
+<Steps>
+  <Step title="Install the Package">
+    Install via Composer:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    composer require ronu/rest-generic-class
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    The package uses Laravel's auto-discovery, so no need to register the service provider.
+  </Step>
+  
+  <Step title="Publish Configuration (Optional)">
+    If you want to customize settings, publish the config file:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+    ```bash
+    php artisan vendor:publish --tag=rest-generic-class-config
+    ```
+    
+    This creates `config/rest-generic-class.php`. The package works with sensible defaults, so publishing is optional.
+  </Step>
+</Steps>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+**That's it!** The package is installed and ready to use. No migrations, no additional setup required.
 </Note>
+
+## Basic Setup
+
+Let's build a Product API with category relationships. We'll create four files:
+
+### Step 1: Create the Model
+
+Create `app/Models/Product.php`:
+
+```php app/Models/Product.php
+<?php
+
+namespace App\Models;
+
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $fillable = ['name', 'price', 'stock', 'category_id'];
+
+    /**
+     * Model identifier used in route parameters
+     */
+    const MODEL = 'product';
+
+    /**
+     * Allowlisted relations for security
+     * Only these relations can be filtered and loaded
+     */
+    const RELATIONS = ['category', 'reviews'];
+
+    /**
+     * Define the category relationship
+     */
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    /**
+     * Define the reviews relationship
+     */
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+}
+```
+
+<Note>
+The `RELATIONS` constant is **critical for security**. Only relations listed here can be queried or loaded. This prevents attackers from accessing unintended data.
+</Note>
+
+### Step 2: Create the Service
+
+Create `app/Services/ProductService.php`:
+
+```php app/Services/ProductService.php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+
+    // All CRUD methods are inherited from BaseService:
+    // - list_all($params)           - List with filters, pagination, relations
+    // - get_one($params)            - Get single record with relations
+    // - create($data)               - Create new record
+    // - update($data, $id)          - Update existing record
+    // - destroy($id)                - Delete record
+    // - update_multiple($data)      - Bulk update
+    // - show($params, $id)          - Show with relations
+}
+```
+
+<Note>
+The service is minimal because all standard CRUD logic is inherited. You can override methods to add custom business logic when needed.
+</Note>
+
+### Step 3: Create the Controller
+
+Create `app/Http/Controllers/Api/ProductController.php`:
+
+```php app/Http/Controllers/Api/ProductController.php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Models\Product;
+use App\Services\ProductService;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    /**
+     * Model class for this controller
+     */
+    protected $modelClass = Product::class;
+
+    /**
+     * Inject the service via constructor
+     */
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+
+    // All REST endpoints are inherited from RestController:
+    // - index(Request)           - GET    /products
+    // - show(Request, $id)       - GET    /products/{id}
+    // - store(Request)           - POST   /products
+    // - update(Request, $id)     - PUT    /products/{id}
+    // - destroy($id)             - DELETE /products/{id}
+    // - updateMultiple(Request)  - POST   /products/update-multiple
+}
+```
+
+### Step 4: Define Routes
+
+Add to `routes/api.php`:
+
+```php routes/api.php
+use App\Http\Controllers\Api\ProductController;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('v1')->group(function () {
+    // Standard REST endpoints (index, store, show, update, destroy)
+    Route::apiResource('products', ProductController::class);
+
+    // Additional bulk operation endpoint
+    Route::post('products/update-multiple', [ProductController::class, 'updateMultiple']);
+});
+```
+
+<Note>
+Laravel's `apiResource` automatically creates these routes:
+- `GET /api/v1/products` → index
+- `POST /api/v1/products` → store
+- `GET /api/v1/products/{id}` → show
+- `PUT /api/v1/products/{id}` → update
+- `DELETE /api/v1/products/{id}` → destroy
+</Note>
+
+## Test Your API
+
+Your API is now ready! Let's test it:
+
+### Create a Product
+
+```bash
+curl -X POST http://localhost:8000/api/v1/products \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Mechanical Keyboard",
+    "price": 129.99,
+    "stock": 50,
+    "category_id": 1
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "model": {
+    "id": 1,
+    "name": "Mechanical Keyboard",
+    "price": 129.99,
+    "stock": 50,
+    "category_id": 1,
+    "created_at": "2026-03-05T10:30:00.000000Z",
+    "updated_at": "2026-03-05T10:30:00.000000Z"
+  }
+}
+```
+
+### List Products with Filtering
+
+```bash
+curl -X GET "http://localhost:8000/api/v1/products" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "select": ["id", "name", "price"],
+    "oper": {
+      "and": [
+        "price|>=|50",
+        "stock|>|0"
+      ]
+    },
+    "pagination": {
+      "page": 1,
+      "pageSize": 10
+    }
+  }'
+```
+
+**Response:**
+```json
+{
+  "current_page": 1,
+  "data": [
+    {
+      "id": 1,
+      "name": "Mechanical Keyboard",
+      "price": 129.99
+    }
+  ],
+  "total": 1,
+  "per_page": 10,
+  "last_page": 1
+}
+```
+
+### Load with Relations
+
+```bash
+curl -X GET "http://localhost:8000/api/v1/products?relations=[\"category:id,name\"]" \
+  -H "Content-Type: application/json"
+```
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Mechanical Keyboard",
+      "price": 129.99,
+      "stock": 50,
+      "category_id": 1,
+      "category": {
+        "id": 1,
+        "name": "Electronics"
+      }
+    }
+  ]
+}
+```
+
+### Filter by Related Data
+
+```bash
+curl -X GET "http://localhost:8000/api/v1/products" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "relations": ["category"],
+    "oper": {
+      "category": {
+        "and": ["name|=|Electronics"]
+      }
+    }
+  }'
+```
+
+This returns only products whose category name is "Electronics".
+
+### Update a Product
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/products/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "price": 119.99,
+    "stock": 45
+  }'
+```
+
+### Bulk Update Multiple Products
+
+```bash
+curl -X POST http://localhost:8000/api/v1/products/update-multiple \
+  -H "Content-Type: application/json" \
+  -d '{
+    "product": [
+      {"id": 1, "stock": 40},
+      {"id": 2, "stock": 30},
+      {"id": 3, "stock": 25}
+    ]
+  }'
+```
+
+### Delete a Product
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/products/1
+```
+
+## What You Get Out of the Box
+
+With these four files, you now have:
+
+<CardGroup cols={2}>
+  <Card title="Complete CRUD" icon="check">
+    Create, read, update, and delete operations with proper HTTP methods
+  </Card>
+  
+  <Card title="Dynamic Filtering" icon="filter">
+    Complex queries with operators and powerful filtering capabilities
+  </Card>
+  
+  <Card title="Relation Loading" icon="link">
+    Eager load relations with field selection
+  </Card>
+  
+  <Card title="Pagination" icon="table">
+    Both offset-based and cursor-based pagination
+  </Card>
+  
+  <Card title="Sorting" icon="arrow-down-1-9">
+    Order by any field in ascending or descending order
+  </Card>
+  
+  <Card title="Bulk Operations" icon="layer-group">
+    Update multiple records in a single request
+  </Card>
+  
+  <Card title="Security" icon="shield">
+    Relation allowlists, operator allowlists, query depth limits
+  </Card>
+  
+  <Card title="Error Handling" icon="triangle-exclamation">
+    Automatic database error parsing with user-friendly messages
+  </Card>
+</CardGroup>
+
+## Advanced Query Examples
+
+### Complex Filtering with Nested Logic
+
+```json
+{
+  "oper": {
+    "and": [
+      "stock|>|0",
+      {
+        "or": [
+          "price|<|50",
+          "on_sale|=|true"
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Translation**: Get products that are in stock AND (price < 50 OR on_sale = true)
+
+### Multiple Relations with Field Selection
+
+```http
+GET /api/v1/products?relations=["category:id,name","reviews:id,rating,comment,user"]
+```
+
+Loads category with only id and name, plus reviews with id, rating, comment, and the full user relation.
+
+### Nested Relation Loading
+
+```http
+GET /api/v1/products?relations=["category.parent:id,name","reviews.user:id,name"]
+```
+
+Loads category → parent and reviews → user in a single query.
+
+### Filtering on Nested Relations
+
+```json
+{
+  "oper": {
+    "category.parent": {
+      "and": ["name|=|Technology"]
+    }
+  }
+}
+```
+
+**Translation**: Get products where the parent category's name is "Technology".
+
+### Cursor Pagination for Infinite Scroll
+
+```json
+{
+  "pagination": {
+    "infinity": true,
+    "pageSize": 20,
+    "cursor": "eyJpZCI6MTAsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0"
+  }
+}
+```
+
+Perfect for mobile apps with infinite scrolling.
+
+## Next Steps
+
+Now that you have a working API, explore these advanced features:
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/configuration">
+    Learn about environment variables, caching, and configuration options
+  </Card>
+  
+  <Card title="Basic Usage" icon="book" href="/basic-usage">
+    Detailed guide to all query parameters and filtering options
+  </Card>
+  
+  <Card title="Advanced Usage" icon="wand-magic-sparkles" href="/advanced-usage">
+    Hierarchical data, role-based fields, exports, and custom logic
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api-reference">
+    Complete reference for all methods, parameters, and configurations
+  </Card>
+</CardGroup>
+
+## Common Next Tasks
+
+<AccordionGroup>
+  <Accordion title="Add Validation Rules">
+    Create a FormRequest class extending `BaseFormRequest`:
+    
+    ```php
+    namespace App\Http\Requests;
+    
+    use Ronu\RestGenericClass\Core\Requests\BaseFormRequest;
+    
+    class ProductRequest extends BaseFormRequest
+    {
+        public function rules()
+        {
+            return [
+                'name' => 'required|string|max:255',
+                'price' => 'required|numeric|min:0',
+                'stock' => 'required|integer|min:0',
+                'category_id' => 'required|exists:categories,id',
+            ];
+        }
+    }
+    ```
+    
+    Update your controller to use it:
+    ```php
+    public function store(ProductRequest $request): array
+    {
+        return parent::store($request);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Enable Caching">
+    Add to your `.env`:
+    
+    ```env
+    REST_CACHE_ENABLED=true
+    REST_CACHE_STORE=redis
+    REST_CACHE_TTL=60
+    REST_CACHE_TTL_LIST=60
+    REST_CACHE_TTL_ONE=30
+    ```
+    
+    Cache is automatically applied to read operations and invalidated on writes.
+  </Accordion>
+  
+  <Accordion title="Add Role-Based Field Restrictions">
+    In your model:
+    
+    ```php
+    protected array $fieldsByRole = [
+        'admin' => ['featured', 'promoted', 'verified'],
+    ];
+    ```
+    
+    Now only users with the 'admin' role can modify these fields.
+  </Accordion>
+  
+  <Accordion title="Enable Hierarchical Categories">
+    For tree structures (like categories):
+    
+    ```php
+    class Category extends BaseModel
+    {
+        const HIERARCHY_FIELD_ID = 'parent_id';
+        protected $fillable = ['name', 'parent_id'];
+    }
+    ```
+    
+    Query the hierarchy:
+    ```json
+    {
+      "hierarchy": {
+        "filter_mode": "with_descendants",
+        "max_depth": 3
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+**Congratulations!** You've built a production-ready REST API with advanced filtering, relations, and pagination in just a few minutes.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Error: Relation 'category' is not allowed">
+    Make sure the relation is listed in your model's `RELATIONS` constant:
+    
+    ```php
+    const RELATIONS = ['category', 'reviews'];
+    ```
+  </Accordion>
+  
+  <Accordion title="No query results with filters">
+    Check your operator syntax. Format must be: `field|operator|value`
+    
+    **Correct**: `"price|>=|100"`  
+    **Incorrect**: `"price >= 100"`
+  </Accordion>
+  
+  <Accordion title="Foreign key not included in relation fields">
+    The package automatically includes foreign keys. Don't worry if you specify `category:id,name` - the `category_id` FK is added automatically.
+  </Accordion>
+  
+  <Accordion title="Cache not working">
+    Ensure caching is enabled in config and your cache driver is properly configured:
+    
+    ```bash
+    php artisan config:clear
+    php artisan cache:clear
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Get Help
+
+If you run into issues:
+
+1. Check the [Troubleshooting Guide](/help/troubleshooting) for common problems
+2. Review the [FAQ](/help/faq) for frequently asked questions
+3. Open an issue on [GitHub](https://github.com/charlietyn/rest-generic-class/issues)
+4. Read the full [Documentation](/introduction) for detailed information
+
+<Card title="Ready to dive deeper?" icon="book-open" href="/basic-usage">
+  Explore the complete feature set in the Basic Usage guide
+</Card>

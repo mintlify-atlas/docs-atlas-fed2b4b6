@@ -1,0 +1,593 @@
+---
+title: "Working with Relations"
+description: "Master eager loading, field selection, and nested relation queries to avoid N+1 problems"
+---
+
+Relation loading is one of the most powerful features in Rest Generic Class. This guide shows you how to efficiently load related data, select specific fields, and combine relation loading with filtering.
+
+## Relation Configuration
+
+Before you can load relations through the API, they must be declared in your model's `RELATIONS` constant.
+
+### Security Whitelist
+
+The `RELATIONS` constant acts as a security whitelist:
+
+```php Product.php
+class Product extends BaseModel
+{
+    const RELATIONS = ['category', 'reviews', 'supplier'];
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    public function supplier()
+    {
+        return $this->belongsTo(Supplier::class);
+    }
+}
+```
+
+<Warning>
+  Only relations listed in `RELATIONS` can be loaded via the API. Requests for unlisted relations will return a 400 error.
+</Warning>
+
+### Why Whitelist Relations?
+
+1. **Security:** Prevents exposure of sensitive relationships
+2. **Performance:** Limits accidental eager loading of expensive relations
+3. **API Design:** Explicitly defines your public API surface
+
+## Basic Relation Loading
+
+### Load All Fields
+
+Load complete related models:
+
+```http
+GET /api/v1/products?relations=["category"]
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "price": 29.99,
+      "category_id": 3,
+      "category": {
+        "id": 3,
+        "name": "Peripherals",
+        "description": "Computer peripherals and accessories",
+        "parent_id": null,
+        "created_at": "2026-01-01T00:00:00.000000Z",
+        "updated_at": "2026-01-01T00:00:00.000000Z"
+      }
+    }
+  ]
+}
+```
+
+### Load Multiple Relations
+
+```http
+GET /api/v1/products?relations=["category","reviews","supplier"]
+```
+
+### The "all" Shortcut
+
+Load all allowed relations at once:
+
+```http
+GET /api/v1/products?relations=["all"]
+```
+
+<Note>
+  This loads every relation in `RELATIONS`. Use cautiously on models with many relations or large datasets.
+</Note>
+
+## Field Selection in Relations
+
+Reduce payload size by selecting only needed fields from relations.
+
+### Syntax
+
+Use the colon syntax: `"relation:field1,field2,field3"`
+
+```http
+GET /api/v1/products?relations=["category:id,name"]
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "price": 29.99,
+      "category_id": 3,
+      "category": {
+        "id": 3,
+        "name": "Peripherals"
+      }
+    }
+  ]
+}
+```
+
+### Foreign Key Auto-Inclusion
+
+The package automatically includes foreign keys to maintain relationships:
+
+```http
+GET /api/v1/products?relations=["category:name"]
+```
+
+Even though only `name` was requested, the foreign key `category_id` is automatically included:
+
+```json
+{
+  "category": {
+    "id": 3,
+    "name": "Peripherals"
+  }
+}
+```
+
+<Note>
+  Always include the primary key (`id`) in your selection. It's required for relationship mapping.
+</Note>
+
+### Multiple Relations with Fields
+
+```http
+GET /api/v1/products?relations=["category:id,name","supplier:id,name,email"]
+```
+
+## Nested Relations
+
+Load relations of relations using dot notation.
+
+### Two Levels Deep
+
+```http
+GET /api/v1/products?relations=["category.parent"]
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "category_id": 3,
+      "category": {
+        "id": 3,
+        "name": "Peripherals",
+        "parent_id": 1,
+        "parent": {
+          "id": 1,
+          "name": "Electronics"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Nested with Field Selection
+
+```http
+GET /api/v1/products?relations=["category.parent:id,name"]
+```
+
+This selects specific fields from the nested `parent` relation:
+
+```json
+{
+  "category": {
+    "id": 3,
+    "name": "Peripherals",
+    "parent_id": 1,
+    "parent": {
+      "id": 1,
+      "name": "Electronics"
+    }
+  }
+}
+```
+
+### Three Levels Deep
+
+```http
+GET /api/v1/orders?relations=["items.product.category:id,name"]
+```
+
+Loads: Order → Order Items → Product → Category
+
+## Relation Validation
+
+The package validates all relation paths to prevent typos and unauthorized access.
+
+### Invalid Relation Error
+
+Request:
+
+```http
+GET /api/v1/products?relations=["invalid_relation"]
+```
+
+Response (400 Bad Request):
+
+```json
+{
+  "message": "Relation 'invalid_relation' is not allowed. Allowed: category, reviews, supplier"
+}
+```
+
+### Strict Validation Mode
+
+By default, models must explicitly define `RELATIONS`:
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'strict_relations' => true, // Require explicit RELATIONS declaration
+],
+```
+
+With `strict_relations=true`, models without `RELATIONS` will throw an error:
+
+```json
+{
+  "message": "Model App\\Models\\Product must define const RELATIONS for security. Set 'filtering.strict_relations' => false to auto-detect (not recommended)."
+}
+```
+
+<Warning>
+  Never disable `strict_relations` in production. Auto-detection can expose unintended relations and create security vulnerabilities.
+</Warning>
+
+## Combining Relations with Filtering
+
+Relation loading and filtering work together seamlessly.
+
+### Load Relations on Filtered Results
+
+```http
+GET /api/v1/products?relations=["category:id,name","supplier:id,name"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50"
+    ]
+  }
+}
+```
+
+This:
+1. Filters products (status=active AND price>=50)
+2. Eager-loads category and supplier for matching products
+
+### Filter by Relation Properties
+
+Filter the root query based on related data:
+
+```http
+GET /api/v1/products?relations=["category:id,name"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "category": {
+      "and": ["name|like|%electronics%"]
+    }
+  }
+}
+```
+
+This returns products:
+1. With status=active
+2. That belong to a category with "electronics" in the name
+3. With the category data eager-loaded
+
+## Filtering Eager-Loaded Relations
+
+Use `_nested=true` to filter the relations themselves, not just the root query.
+
+### Without _nested (Default)
+
+```http
+GET /api/v1/products?relations=["reviews"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "reviews": {
+      "and": ["rating|>=|4"]
+    }
+  }
+}
+```
+
+Result:
+- Returns products **that have** reviews with rating >= 4
+- Loads **all** reviews for those products (including ratings < 4)
+
+### With _nested=true
+
+```http
+GET /api/v1/products?relations=["reviews"]
+Content-Type: application/json
+
+{
+  "_nested": true,
+  "oper": {
+    "reviews": {
+      "and": ["rating|>=|4"]
+    }
+  }
+}
+```
+
+Result:
+- Returns products **that have** reviews with rating >= 4
+- Loads **only** reviews with rating >= 4
+
+<Note>
+  With `_nested=true`, the eager-loaded `reviews` array will only contain filtered items. This changes your response structure.
+</Note>
+
+## Optimizing N+1 Queries
+
+N+1 queries occur when you load a list of records, then query for related data inside a loop.
+
+### The Problem
+
+**Without eager loading:**
+
+```php
+// 1 query: get all products
+$products = Product::where('status', 'active')->get();
+
+foreach ($products as $product) {
+    // N queries: one per product!
+    echo $product->category->name;
+}
+
+// Total: 1 + N queries
+```
+
+### The Solution
+
+**With eager loading:**
+
+```http
+GET /api/v1/products?relations=["category:id,name"]
+Content-Type: application/json
+
+{
+  "oper": {"and": ["status|=|active"]}
+}
+```
+
+The package automatically eager-loads relations:
+
+```php
+// 1 query: get all products
+// 1 query: get all related categories
+$products = Product::where('status', 'active')
+    ->with(['category:id,name'])
+    ->get();
+
+// Total: 2 queries regardless of N
+```
+
+### Monitoring Query Count
+
+Enable query logging to verify eager loading:
+
+```env .env
+LOG_QUERY=true
+```
+
+Check `storage/logs/rest-generic-class.log` for executed queries.
+
+## Polymorphic Relations
+
+Rest Generic Class supports polymorphic relations with proper configuration.
+
+### Setup
+
+```php Comment.php
+class Comment extends BaseModel
+{
+    const RELATIONS = ['commentable'];
+
+    public function commentable()
+    {
+        return $this->morphTo();
+    }
+}
+```
+
+```php Product.php
+class Product extends BaseModel
+{
+    const RELATIONS = ['comments'];
+
+    public function comments()
+    {
+        return $this->morphMany(Comment::class, 'commentable');
+    }
+}
+```
+
+### Loading Polymorphic Relations
+
+```http
+GET /api/v1/comments?relations=["commentable"]
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "body": "Great product!",
+      "commentable_type": "App\\Models\\Product",
+      "commentable_id": 10,
+      "commentable": {
+        "id": 10,
+        "name": "Wireless Mouse",
+        "price": 29.99
+      }
+    }
+  ]
+}
+```
+
+## Real-World Examples
+
+### E-commerce: Product Listing with Category and Reviews
+
+```http
+GET /api/v1/products?select=["id","name","price","image_url"]&relations=["category:id,name","reviews:id,rating,created_at"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "stock|>|0"
+    ]
+  },
+  "orderby": [{"name": "asc"}],
+  "pagination": {"page": 1, "pageSize": 20}
+}
+```
+
+### CRM: Leads with Assigned User and Company
+
+```http
+GET /api/v1/leads?relations=["assignedUser:id,name,email","company:id,name,industry"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|qualified",
+      "estimated_value|>=|10000"
+    ],
+    "assignedUser": {
+      "and": ["active|=|true"]
+    }
+  },
+  "orderby": [{"estimated_value": "desc"}]
+}
+```
+
+### Blog: Posts with Author, Category, and Comment Count
+
+```http
+GET /api/v1/posts?relations=["author:id,name,avatar_url","category:id,name,slug"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "published|=|true",
+      "published_at|<=|2026-03-05"
+    ]
+  },
+  "orderby": [{"published_at": "desc"}]
+}
+```
+
+## Troubleshooting
+
+### Relation Not Loaded
+
+**Symptom:** Relation is `null` or missing from response
+
+**Causes:**
+- Relation not in `RELATIONS` constant
+- Typo in relation name
+- Foreign key is null
+
+**Solution:**
+- Verify: `php artisan tinker` → `Product::RELATIONS`
+- Check raw data: `GET /api/v1/products` (without relations param)
+- Look for null foreign keys
+
+### Wrong Fields in Relation
+
+**Symptom:** Relation includes fields you didn't select
+
+**Cause:** Foreign key auto-inclusion
+
+**Explanation:** The package adds foreign keys automatically to maintain relationships. This is intentional.
+
+### Performance Issues
+
+**Symptom:** Slow response times with relations
+
+**Causes:**
+- Loading too many relations
+- Large collections without pagination
+- Missing database indexes on foreign keys
+
+**Solutions:**
+- Load only needed fields: `category:id,name`
+- Always paginate large datasets
+- Add indexes: `$table->index('category_id')`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Filtering" icon="filter" href="/guides/advanced-filtering">
+    Learn to combine relation loading with complex filters
+  </Card>
+  <Card title="Hierarchical Data" icon="sitemap" href="/guides/hierarchical-data">
+    Work with self-referencing tree structures
+  </Card>
+  <Card title="Many-to-Many" icon="diagram-project" href="/guides/many-to-many">
+    Manage pivot tables and attach/detach operations
+  </Card>
+  <Card title="Caching" icon="bolt" href="/guides/caching">
+    Cache relation queries for better performance
+  </Card>
+</CardGroup>
+
+## Evidence
+
+- **File:** `src/Core/Services/BaseService.php`  
+  **Lines:** 98-174, 176-224  
+  Implements `relations()` method with field selection, validation, and `_nested` support
+
+- **File:** `src/Core/Services/BaseService.php`  
+  **Lines:** 1334-1395, 1397-1438  
+  Shows `getRelationsForModel()` and `extractRelationFiltersForModel()` for validation
+
+- **File:** `src/Core/Models/BaseModel.php`  
+  **Lines:** 40-44  
+  Defines `RELATIONS` constant used for whitelisting

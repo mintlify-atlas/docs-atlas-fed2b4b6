@@ -1,0 +1,267 @@
+---
+title: InjectRequestParams
+description: Middleware for injecting parameters into requests with smart type casting
+---
+
+## Overview
+
+The `InjectRequestParams` middleware allows you to inject static or dynamic parameters directly into the request from route definitions. It supports intelligent type casting including booleans, nulls, numbers, JSON, and base64-encoded payloads.
+
+## Basic Usage
+
+```php
+Route::post('/tasks', [TaskController::class, 'store'])
+    ->middleware('inject:scenario=assign,mode=REVOKE,dry_run=true');
+```
+
+The above injects three parameters:
+- `scenario` = `"assign"` (string)
+- `mode` = `"REVOKE"` (string)
+- `dry_run` = `true` (boolean)
+
+## Parameters
+
+The middleware accepts variable arguments in the format `key=value` or `key:value`:
+
+<ParamField path="...pairs" type="string">
+  Key-value pairs to inject. Supports both `=` and `:` as separators.
+</ParamField>
+
+## Options
+
+Leading parameters modify the injection behavior:
+
+<ParamField path="ns" type="string">
+  Namespace prefix for all injected keys. Example: `ns=_meta` injects keys as `_meta.key`
+</ParamField>
+
+<ParamField path="force" type="boolean" default="false">
+  When `true`, overwrites existing request values. By default, only sets values if not already present.
+</ParamField>
+
+## Value Casting
+
+The middleware automatically casts string values to appropriate PHP types:
+
+### Boolean Values
+
+```php
+// Route
+->middleware('inject:active=true,verified=false')
+
+// Result
+$request->get('active');   // true (boolean)
+$request->get('verified'); // false (boolean)
+```
+
+### Null Values
+
+```php
+// Route
+->middleware('inject:deleted_at=null')
+
+// Result
+$request->get('deleted_at'); // null
+```
+
+### Numeric Values
+
+```php
+// Route
+->middleware('inject:count=42,price=19.99')
+
+// Result
+$request->get('count'); // 42 (int)
+$request->get('price'); // 19.99 (float)
+```
+
+### JSON Objects and Arrays
+
+Prefix with `json:` to decode JSON:
+
+```php
+// Route
+->middleware('inject:config=json:{"theme":"dark","lang":"en"}')
+
+// Result
+$request->get('config'); // ['theme' => 'dark', 'lang' => 'en']
+```
+
+```php
+// Array example
+->middleware('inject:roles=json:["admin","editor"]')
+
+// Result
+$request->get('roles'); // ['admin', 'editor']
+```
+
+### Base64-Encoded Values
+
+Prefix with `b64:` to decode base64. If the decoded content looks like JSON, it's automatically decoded:
+
+```php
+// Route (base64 of '{"id":123}')
+->middleware('inject:data=b64:eyJpZCI6MTIzfQ==')
+
+// Result
+$request->get('data'); // ['id' => 123]
+```
+
+### Plain Strings
+
+Any value that doesn't match special patterns is kept as a string:
+
+```php
+// Route
+->middleware('inject:name=John Doe,status=pending')
+
+// Result
+$request->get('name');   // "John Doe" (string)
+$request->get('status'); // "pending" (string)
+```
+
+## Advanced Usage
+
+### Namespace Prefixing
+
+Group injected parameters under a namespace:
+
+```php
+Route::post('/process', [ProcessController::class, 'handle'])
+    ->middleware('inject:ns=_meta,version=2,author=system');
+
+// Controller
+$request->get('_meta.version'); // 2
+$request->get('_meta.author');  // "system"
+```
+
+### Force Overwrite
+
+Overwrite existing request values:
+
+```php
+Route::post('/tasks', [TaskController::class, 'store'])
+    ->middleware('inject:force,status=pending');
+
+// Even if client sends { "status": "active" },
+// it will be overwritten to "pending"
+```
+
+### Combined Options
+
+```php
+Route::post('/admin/users', [AdminUserController::class, 'store'])
+    ->middleware('inject:ns=_meta,force,created_by=admin,timestamp=1234567890');
+
+// Result
+$request->get('_meta.created_by');  // "admin"
+$request->get('_meta.timestamp');   // 1234567890
+```
+
+## Use Cases
+
+### Scenario-Based Processing
+
+```php
+// Assign route
+Route::post('/users/{user}/roles', [RoleController::class, 'process'])
+    ->middleware('inject:scenario=assign');
+
+// Revoke route
+Route::delete('/users/{user}/roles', [RoleController::class, 'process'])
+    ->middleware('inject:scenario=revoke');
+
+// Controller
+public function process(Request $request)
+{
+    $scenario = $request->get('scenario'); // 'assign' or 'revoke'
+    // ...
+}
+```
+
+### Audit Metadata
+
+```php
+Route::middleware('inject:ns=_audit,source=api,version=2')
+    ->group(function () {
+        Route::post('/articles', [ArticleController::class, 'store']);
+        Route::put('/articles/{id}', [ArticleController::class, 'update']);
+    });
+
+// Access in controller or observers
+$source = $request->get('_audit.source');   // "api"
+$version = $request->get('_audit.version'); // 2
+```
+
+### Feature Flags
+
+```php
+Route::post('/payments/process', [PaymentController::class, 'process'])
+    ->middleware('inject:use_new_gateway=true,retry_on_failure=true');
+```
+
+### Default Values
+
+```php
+// Set defaults that can be overridden by the client
+Route::post('/reports', [ReportController::class, 'generate'])
+    ->middleware('inject:format=pdf,include_summary=true');
+
+// With force, make values immutable
+Route::post('/public/feedback', [FeedbackController::class, 'store'])
+    ->middleware('inject:force,source=public,verified=false');
+```
+
+## Request Attributes
+
+Injected values are also stored as request attributes (not just input), making them accessible via:
+
+```php
+// Both work:
+$request->get('key');           // From input
+$request->attributes->get('key'); // From attributes
+```
+
+## Type Casting Reference
+
+| Input | Output | Type |
+|-------|--------|------|
+| `true` | `true` | boolean |
+| `false` | `false` | boolean |
+| `null` | `null` | null |
+| `42` | `42` | integer |
+| `19.99` | `19.99` | float |
+| `json:{...}` | `[...]` | array |
+| `json:[...]` | `[...]` | array |
+| `b64:...` | decoded string or array | mixed |
+| `hello` | `"hello"` | string |
+
+## Examples
+
+### Complex JSON Injection
+
+```php
+Route::post('/workflows', [WorkflowController::class, 'execute'])
+    ->middleware(
+        'inject:config=json:{"timeout":30,"retry":3,"notify":true}'
+    );
+
+// Controller
+$config = $request->get('config');
+// ['timeout' => 30, 'retry' => 3, 'notify' => true]
+```
+
+### Multiple Middleware Instances
+
+```php
+Route::post('/process', [ProcessController::class, 'handle'])
+    ->middleware([
+        'inject:ns=_meta,version=2,source=api',
+        'inject:force,dry_run=false',
+    ]);
+```
+
+## See Also
+
+- [FilterRequestByRole Middleware](/api/middleware/filter-request-by-role) - Role-based field filtering
+- [TransformData Middleware](/api/middleware/transform-data) - Request validation

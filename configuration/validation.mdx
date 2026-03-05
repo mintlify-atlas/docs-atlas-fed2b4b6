@@ -1,0 +1,421 @@
+---
+title: Validation Configuration
+description: Configure validation caching and column validation behavior
+---
+
+The Rest Generic Class package provides two types of validation that can be configured independently:
+
+1. **Validation Cache** - Caches database existence validation queries
+2. **Column Validation** - Validates column names in filter conditions
+
+## Validation Cache
+
+The `ValidatesExistenceInDatabase` trait performs database existence checks during validation. These queries can be cached to reduce database load.
+
+### Enable Validation Cache
+
+```env
+REST_VALIDATION_CACHE_ENABLED=true
+```
+
+<ParamField path="REST_VALIDATION_CACHE_ENABLED" type="boolean" default="true">
+  Master switch for validation query caching. When enabled, database existence checks are cached for the configured TTL.
+</ParamField>
+
+### Configure TTL
+
+```env
+REST_VALIDATION_CACHE_TTL=3600
+```
+
+<ParamField path="REST_VALIDATION_CACHE_TTL" type="integer" default="3600">
+  Time-to-live in seconds for cached validation results.
+  
+  **Recommendation:** Use a longer TTL (1+ hours) since table structures and validation rules rarely change during runtime.
+</ParamField>
+
+### Set Cache Prefix
+
+```env
+REST_VALIDATION_CACHE_PREFIX=validation
+```
+
+<ParamField path="REST_VALIDATION_CACHE_PREFIX" type="string" default="validation">
+  Prefix for validation cache keys. Helps organize and identify validation-related cache entries.
+  
+  **Example keys:**
+  - `validation:products:exists:123`
+  - `validation:users:columns`
+</ParamField>
+
+### Choose Database Connection
+
+```env
+REST_VALIDATION_CONNECTION=mysql_read
+```
+
+<ParamField path="REST_VALIDATION_CONNECTION" type="string" default="db">
+  Database connection name used for validation queries.
+  
+  **Use case:** Route validation queries to a read replica to reduce load on the primary database.
+</ParamField>
+
+### Configuration Structure
+
+```php
+'validation' => [
+    'cache_enabled' => env('REST_VALIDATION_CACHE_ENABLED', true),
+    'cache_ttl' => (int)env('REST_VALIDATION_CACHE_TTL', 3600),
+    'cache_prefix' => env('REST_VALIDATION_CACHE_PREFIX', 'validation'),
+    'connection' => env('REST_VALIDATION_CONNECTION', 'db'),
+],
+```
+
+## Column Validation
+
+Column validation ensures that filter conditions only reference valid database columns, preventing SQL injection and information disclosure.
+
+### Enable Column Validation
+
+```env
+REST_VALIDATE_COLUMNS=true
+```
+
+<ParamField path="REST_VALIDATE_COLUMNS" type="boolean" default="true">
+  Validates that column names in `oper` filter conditions exist in the database table.
+  
+  **When enabled:**
+  - Queries column list from database
+  - Checks filter columns against valid columns
+  - Caches column lists per table
+  
+  **When disabled:**
+  - No column validation occurs (security risk)
+</ParamField>
+
+### Strict Column Validation
+
+```env
+REST_STRICT_COLUMNS=true
+```
+
+<ParamField path="REST_STRICT_COLUMNS" type="boolean" default="true">
+  Enforces strict column validation behavior.
+  
+  **When `true`:**
+  - Invalid column names cause validation errors
+  - Request is rejected with 422 status
+  
+  **When `false`:**
+  - Invalid columns are silently ignored
+  - Query proceeds with valid columns only
+</ParamField>
+
+### Column Cache TTL
+
+Column lists are cached automatically to avoid repeated database schema queries:
+
+```php
+'filtering' => [
+    'column_cache_ttl' => 3600, // Cache column lists for 1 hour
+],
+```
+
+<Note>
+Column cache TTL is set in the config file, not via environment variable. To customize, publish and edit `config/rest-generic-class.php`.
+</Note>
+
+## Security Considerations
+
+### Always Enable in Production
+
+<Warning>
+**Security critical:** Both `REST_VALIDATE_COLUMNS` and `REST_STRICT_COLUMNS` should be `true` in production.
+
+Disabling these allows:
+- Potential SQL injection via crafted column names
+- Information disclosure through error messages
+- Bypassing intended column access restrictions
+</Warning>
+
+### Production Configuration
+
+```env
+# Required for security
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Recommended for performance
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=7200
+```
+
+### When to Disable
+
+Only disable column validation in these scenarios:
+
+- **Local development** - For faster iteration without validation overhead
+- **Trusted internal tools** - When all API consumers are internal and trusted
+- **Performance testing** - To measure raw query performance
+
+**Never disable in production or staging environments accessible to untrusted users.**
+
+## Performance Impact
+
+### Validation Cache Benefits
+
+| Without Cache | With Cache |
+|---------------|------------|
+| Database query per validation | Single query, cached for TTL |
+| ~10-50ms per validation | ~0.1-1ms from cache |
+| Increased DB load | Minimal DB load |
+
+### Column Validation Overhead
+
+| First Request | Subsequent Requests |
+|---------------|---------------------|
+| Schema query (~10-50ms) | Cached columns (~0.1ms) |
+| One-time per table | No additional overhead |
+
+<Note>
+Column lists are cached per table, so the overhead only occurs on the first request to each resource type.
+</Note>
+
+## Custom Validation Rules
+
+You can extend validation behavior in your service classes:
+
+### Custom Column Validation
+
+```php
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    protected function validateCustomColumns(array $columns): array
+    {
+        // Add custom validation logic
+        $allowedColumns = ['id', 'name', 'price', 'category_id'];
+        
+        return array_intersect($columns, $allowedColumns);
+    }
+}
+```
+
+### Override Validation Connection
+
+```php
+class ProductService extends BaseService
+{
+    protected function getValidationConnection(): string
+    {
+        // Use specific connection for this service
+        return 'mysql_read_replica';
+    }
+}
+```
+
+### Custom Existence Validation
+
+```php
+use Ronu\RestGenericClass\Core\Traits\ValidatesExistenceInDatabase;
+
+class CustomValidator
+{
+    use ValidatesExistenceInDatabase;
+    
+    protected function validateExists(string $table, $id): bool
+    {
+        return $this->checkExistenceInDatabase(
+            table: $table,
+            column: 'id',
+            value: $id,
+            ttl: 7200 // Custom TTL for this validation
+        );
+    }
+}
+```
+
+## Filtering Configuration
+
+Additional filtering safety limits are configured alongside column validation:
+
+```php
+'filtering' => [
+    'max_depth' => 5,                    // Maximum nesting depth for oper filters
+    'max_conditions' => 100,             // Maximum number of conditions per request
+    'strict_relations' => true,          // Require explicit RELATIONS constant
+    'allowed_operators' => [...],        // Permitted filter operators
+    'validate_columns' => env('REST_VALIDATE_COLUMNS', true),
+    'strict_column_validation' => env('REST_STRICT_COLUMNS', true),
+    'column_cache_ttl' => 3600,
+],
+```
+
+### Max Depth
+
+Prevents excessively nested filter conditions:
+
+```json
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      {
+        "or": [
+          "price|>|100",
+          {
+            "and": [...] // Nesting level 3
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+With `max_depth: 5`, requests with more than 5 nesting levels are rejected.
+
+### Max Conditions
+
+Limits total number of filter conditions:
+
+```json
+{
+  "oper": {
+    "and": [
+      "field1|=|value1",
+      "field2|=|value2",
+      // ... up to max_conditions
+    ]
+  }
+}
+```
+
+With `max_conditions: 100`, requests with more than 100 total conditions are rejected.
+
+### Strict Relations
+
+Requires explicit relation declarations in models:
+
+```php
+class Product extends BaseModel
+{
+    const RELATIONS = ['category', 'reviews', 'tags'];
+}
+```
+
+With `strict_relations: true`, only relations listed in `RELATIONS` can be loaded via `relations` parameter.
+
+<Warning>
+Disabling `strict_relations` allows loading any relationship defined on the model, which may expose unintended data.
+</Warning>
+
+## Example Configurations
+
+### High-Security Production
+
+```env
+# Strict validation
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Validation cache with read replica
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=7200
+REST_VALIDATION_CACHE_PREFIX=validation
+REST_VALIDATION_CONNECTION=mysql_read
+```
+
+### Development Environment
+
+```env
+# Relaxed validation for faster iteration
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=false
+
+# Validation cache enabled
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=3600
+```
+
+### Performance-Optimized
+
+```env
+# Full validation with aggressive caching
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+
+# Long TTL to minimize database queries
+REST_VALIDATION_CACHE_ENABLED=true
+REST_VALIDATION_CACHE_TTL=14400  # 4 hours
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Column validation errors">
+    **Error:** `Invalid column 'xyz' in filter conditions`
+    
+    **Cause:** Column doesn't exist in the table or isn't accessible
+    
+    **Solution:**
+    1. Verify column name spelling
+    2. Check if column exists in database: `DESCRIBE table_name`
+    3. Clear column cache if schema changed: `php artisan cache:clear`
+    4. If column exists but still fails, check `column_cache_ttl` and wait for cache expiry
+  </Accordion>
+  
+  <Accordion title="Validation queries hitting primary database">
+    **Symptom:** High load on primary database from validation queries
+    
+    **Solution:** Route validation to read replica
+    
+    ```env
+    REST_VALIDATION_CONNECTION=mysql_read
+    ```
+    
+    Ensure `mysql_read` is configured in `config/database.php`:
+    
+    ```php
+    'mysql_read' => [
+        'driver' => 'mysql',
+        'read' => [
+            'host' => ['192.168.1.2'],
+        ],
+        // ... other settings
+    ],
+    ```
+  </Accordion>
+  
+  <Accordion title="Stale validation cache after schema changes">
+    **Symptom:** New columns not recognized or deleted columns still cached
+    
+    **Solution:** Clear validation cache
+    
+    ```bash
+    php artisan cache:clear
+    ```
+    
+    Or clear specific validation cache keys:
+    
+    ```bash
+    php artisan tinker
+    >>> Cache::forget('validation:products:columns')
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference of validation-related environment variables
+  </Card>
+  <Card title="Cache Strategy" icon="database" href="/configuration/cache-strategy">
+    Learn about response caching configuration
+  </Card>
+  <Card title="Filtering" icon="filter" href="/core-concepts/filtering">
+    Learn how filtering works with column validation
+  </Card>
+</CardGroup>

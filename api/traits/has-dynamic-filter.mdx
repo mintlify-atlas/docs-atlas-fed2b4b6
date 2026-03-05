@@ -1,0 +1,511 @@
+---
+title: HasDynamicFilter Trait
+description: API reference for the HasDynamicFilter trait that powers dynamic filtering with complex conditions and operators
+---
+
+## Overview
+
+The `HasDynamicFilter` trait provides dynamic query filtering capabilities with support for complex conditions, multiple operators, and nested logic. It is used internally by BaseService but can also be used directly in custom queries.
+
+**Namespace**: `Ronu\RestGenericClass\Core\Traits\HasDynamicFilter`
+
+**Location**: `/src/Core/Traits/HasDynamicFilter.php:11`
+
+## Usage
+
+```php
+use Ronu\RestGenericClass\Core\Traits\HasDynamicFilter;
+
+class CustomModel extends Model
+{
+    use HasDynamicFilter;
+}
+
+// In a query
+$results = CustomModel::query()
+    ->withFilters($filters)
+    ->get();
+```
+
+## Methods
+
+### scopeWithFilters
+
+Apply dynamic filters to a query builder instance using a structured array.
+
+```php
+public function scopeWithFilters(
+    Builder $query, 
+    array $params, 
+    string $condition = 'and', 
+    $model = null
+): Builder
+```
+
+#### Parameters
+
+- `Builder $query` - The Eloquent query builder instance
+- `array $params` - Filter structure with logical operators and conditions
+- `string $condition` - Default logical operator: `'and'` or `'or'` (default: `'and'`)
+- `mixed $model` - Model instance or class for table prefixing (optional)
+
+#### Returns
+
+`Builder` - The modified query builder instance
+
+#### Example
+
+```php
+$filters = [
+    'and' => [
+        'status|=|active',
+        'price|>|100'
+    ],
+    'or' => [
+        'featured|=|true',
+        'discount|>|0'
+    ]
+];
+
+$products = Product::query()
+    ->withFilters($filters)
+    ->get();
+```
+
+### applyFilters (Private)
+
+Core filtering logic that processes filter arrays and applies them to the query.
+
+```php
+private function applyFilters(
+    $query, 
+    $params, 
+    $condition = "and", 
+    $model = null
+): Builder
+```
+
+**Features:**
+- Parses JSON strings or arrays
+- Validates query builder instance
+- Determines table name for column prefixing
+- Detects database driver (PostgreSQL features)
+- Processes nested filter structures
+- Validates operators against allowlist
+
+**Throws**: `HttpException` (501, 400) for invalid input
+
+## Supported Operators
+
+The trait supports the following operators (configurable via `allowed_operators` in config):
+
+### Comparison
+- `=` - Equals
+- `!=`, `<>` - Not equals
+- `<` - Less than
+- `>` - Greater than  
+- `<=` - Less than or equal
+- `>=` - Greater than or equal
+
+### Pattern Matching
+- `like` - Case-sensitive pattern match
+- `not like` - Negated pattern match
+- `ilike` - Case-insensitive (PostgreSQL)
+- `not ilike` - Negated case-insensitive
+- `ilikeu` - Case-insensitive with unaccent (PostgreSQL)
+- `regexp` - Regular expression match
+- `not regexp` - Negated regex
+
+### List Operations
+- `in` - Value in list
+- `not in`, `notin` - Value not in list
+
+### Range Operations
+- `between` - Value between two values
+- `not between`, `notbetween` - Value outside range
+
+### Null Operations
+- `null` - Field is NULL
+- `not null`, `notnull` - Field is not NULL
+
+### Existence
+- `exists` - Subquery exists
+- `not exists`, `notexists` - Subquery does not exist
+
+### Date Operations
+- `date` - Date equals
+- `not date`, `notdate` - Date not equals
+
+## Helper Methods
+
+### getTableName (Private)
+
+Extracts table name from query or model for column prefixing.
+
+```php
+private function getTableName(Builder $query, $model = null): ?string
+```
+
+#### Parameters
+- `Builder $query` - Query builder instance
+- `mixed $model` - Model instance or class name
+
+#### Returns
+`?string` - Table name or null if unable to determine
+
+### prefixColumn (Private)
+
+Prefixes column with table name to avoid ambiguity in joins.
+
+```php
+private function prefixColumn(string $column, ?string $tableName): string
+```
+
+#### Parameters
+- `string $column` - Column name
+- `?string $tableName` - Table name for prefixing
+
+#### Returns
+`string` - Prefixed column name (e.g., `products.status`)
+
+**Logic:**
+- Skips if `$tableName` is null
+- Skips if column already contains `.` (already prefixed)
+- Skips if column contains `(` (SQL function)
+- Otherwise prefixes: `table_name.column`
+
+#### Example
+
+```php
+$this->prefixColumn('status', 'products');     // 'products.status'
+$this->prefixColumn('products.status', 'products'); // 'products.status' (unchanged)
+$this->prefixColumn('COUNT(*)', 'products');   // 'COUNT(*)' (unchanged)
+```
+
+### parseConditionString (Protected)
+
+Parses a condition string into field, operator, and value components.
+
+```php
+protected function parseConditionString(mixed $condition): array
+```
+
+#### Parameters
+- `mixed $condition` - Condition string in format `field|operator|value`
+
+#### Returns
+`array` - Array with three elements: `[field, operator, value]`
+
+#### Throws
+`HttpException` (400) if condition is not a valid string or format is incorrect
+
+#### Example
+
+```php
+$this->parseConditionString('price|>|100');
+// Returns: ['price', '>', '100']
+
+$this->parseConditionString('status|in|active,pending');
+// Returns: ['status', 'in', 'active,pending']
+```
+
+### decodeValue (Protected)
+
+Decodes string values into appropriate PHP types.
+
+```php
+protected function decodeValue(string $val): mixed
+```
+
+#### Parameters
+- `string $val` - String value to decode
+
+#### Returns
+`mixed` - Decoded value (string, number, boolean, null, or array)
+
+#### Logic
+- Splits comma-separated values into arrays
+- Converts `'null'` → `null`
+- Converts `'true'` → `true`
+- Converts `'false'` → `false`
+- Converts numeric strings → numbers
+- Otherwise returns as string
+
+#### Example
+
+```php
+$this->decodeValue('100');           // 100 (integer)
+$this->decodeValue('99.99');         // 99.99 (float)
+$this->decodeValue('true');          // true (boolean)
+$this->decodeValue('null');          // null
+$this->decodeValue('active');        // 'active' (string)
+$this->decodeValue('1,2,3');         // [1, 2, 3] (array)
+$this->decodeValue('red,blue');      // ['red', 'blue'] (array)
+```
+
+### toBetweenArray (Protected)
+
+Validates and formats values for `between` operator.
+
+```php
+protected function toBetweenArray($val): array
+```
+
+#### Parameters
+- `mixed $val` - Value to validate (must be array with exactly 2 elements)
+
+#### Returns
+`array` - Validated two-element array
+
+#### Throws
+`HttpException` (400) if value is not an array or doesn't have exactly 2 elements
+
+#### Example
+
+```php
+$this->toBetweenArray([10, 100]);  // [10, 100] (valid)
+$this->toBetweenArray([1, 2, 3]);  // Throws error (3 elements)
+```
+
+## Filter Structure
+
+### Basic Structure
+
+```php
+[
+    'and' => [
+        'field1|operator1|value1',
+        'field2|operator2|value2',
+    ],
+    'or' => [
+        'field3|operator3|value3',
+        'field4|operator4|value4',
+    ]
+]
+```
+
+### Nested Structure
+
+```php
+[
+    'and' => [
+        'status|=|active',
+        [
+            'or' => [
+                'priority|=|high',
+                'urgent|=|true'
+            ]
+        ]
+    ]
+]
+```
+
+Generates SQL:
+```sql
+WHERE status = 'active' AND (priority = 'high' OR urgent = true)
+```
+
+## Operator-Specific Behavior
+
+### IN Operator
+
+```php
+'category_id|in|1,2,3'
+// Becomes: whereIn('category_id', [1, 2, 3])
+```
+
+### BETWEEN Operator
+
+```php
+'price|between|50,200'
+// Becomes: whereBetween('price', [50, 200])
+```
+
+### LIKE Operator
+
+```php
+'name|like|%John%'
+// Becomes: where('name', 'like', '%John%')
+```
+
+### NULL Operator
+
+```php
+'deleted_at|null|'
+// Becomes: whereNull('deleted_at')
+```
+
+### ILIKEU Operator (PostgreSQL)
+
+```php
+'name|ilikeu|Jose'
+// Becomes: whereRaw("unaccent(name) ILIKE unaccent(?)", ['%Jose%'])
+// Matches: José, Jose, JOSE, etc.
+```
+
+## Error Handling
+
+The trait throws `HttpException` in the following cases:
+
+### Invalid Query Instance (501)
+
+```php
+$query = "not a builder";
+$this->applyFilters($query, $params);
+// Throws: "The $query must be an instance of Builder or EloquentBuilder."
+```
+
+### Invalid Operator (400)
+
+```php
+'price|INVALID|100'
+// Throws: "The INVALID value is not a valid operator."
+```
+
+### Invalid Condition Format (400)
+
+```php
+'price-greater-than-100'  // Wrong delimiter
+// Throws: "Invalid condition: 'price-greater-than-100'. Expected format 'field|operator|value'."
+```
+
+### Invalid Condition Type (400)
+
+```php
+['array', 'instead', 'of', 'string']
+// Throws: "Invalid condition format: expected a string like 'field|operator|value', but received array"
+```
+
+### Unsupported Logical Key (400)
+
+```php
+['xor' => [...]]
+// Throws: "Unsupported logical key 'xor'. Only 'and' and 'or' are allowed."
+```
+
+### Invalid BETWEEN Values (400)
+
+```php
+'price|between|100'  // Only one value
+// Throws: "The 'between' operator requires exactly two values."
+```
+
+## Configuration
+
+Configure filtering behavior in `config/rest-generic-class.php`:
+
+```php
+'filtering' => [
+    // Maximum nesting depth
+    'max_depth' => 5,
+    
+    // Maximum number of conditions
+    'max_conditions' => 100,
+    
+    // Enforce relation allowlist
+    'strict_relations' => true,
+    
+    // Allowed operators (customize as needed)
+    'allowed_operators' => [
+        '=', '!=', '<', '>', '<=', '>=',
+        'like', 'not like', 'ilike', 'not ilike',
+        'in', 'not in', 'between', 'not between',
+        'null', 'not null', 'exists', 'not exists',
+        'date', 'not date', 'regexp', 'not regexp'
+    ],
+    
+    // Validate columns against model/table
+    'validate_columns' => env('REST_VALIDATE_COLUMNS', true),
+    
+    // Strict validation (throw errors vs warnings)
+    'strict_column_validation' => env('REST_STRICT_COLUMNS', true),
+    
+    // Cache column validation results
+    'column_cache_ttl' => 3600,
+],
+```
+
+## Performance Considerations
+
+1. **Table Prefixing**: Automatic prefixing helps with joins but adds minimal overhead
+2. **Operator Validation**: Checking allowed operators prevents injection but requires array lookup
+3. **Type Conversion**: `decodeValue()` processes each value individually
+4. **Nested Filters**: Deep nesting creates subqueries; limit depth via config
+
+## Security Features
+
+<Warning>
+**Built-in Security:**
+- Operator allowlist prevents SQL injection via invalid operators
+- Prepared statements used for all values
+- Column validation ensures only valid fields are queried
+- Depth/condition limits prevent DoS attacks
+- Table prefixing prevents ambiguous column attacks
+</Warning>
+
+## Examples
+
+### Simple Filter
+
+```php
+$filters = [
+    'and' => ['status|=|active']
+];
+
+$products = Product::withFilters($filters)->get();
+```
+
+### Multiple Conditions
+
+```php
+$filters = [
+    'and' => [
+        'status|=|active',
+        'price|>|100',
+        'stock|>=|1'
+    ]
+];
+```
+
+### Complex Nested Logic
+
+```php
+$filters = [
+    'and' => [
+        'status|=|active',
+        [
+            'or' => [
+                'category_id|in|1,2,3',
+                'featured|=|true'
+            ]
+        ],
+        'price|between|50,500'
+    ]
+];
+```
+
+### Using with Service
+
+```php
+class ProductService extends BaseService
+{
+    public function getActiveExpensiveProducts(): array
+    {
+        $filters = [
+            'and' => [
+                'status|=|active',
+                'price|>|1000'
+            ]
+        ];
+        
+        return $this->list_all(['oper' => $filters]);
+    }
+}
+```
+
+## Related Documentation
+
+- [Dynamic Filtering Guide](/core/filtering) - User guide for filtering
+- [BaseService Class](/api/base-service) - Service that uses this trait
+- [Advanced Filtering Guide](/guides/advanced-filtering) - Detailed examples
+- [Configuration](/configuration/overview) - Filtering configuration

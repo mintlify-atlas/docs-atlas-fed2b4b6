@@ -1,0 +1,664 @@
+---
+title: "Role-Based Access Control with Spatie"
+description: "Secure your API endpoints with Spatie Laravel Permission integration"
+---
+
+Rest Generic Class includes built-in integration with [Spatie Laravel Permission](https://spatie.be/docs/laravel-permission) for role-based access control (RBAC). This guide shows you how to set up permissions, protect endpoints, and manage roles through the API.
+
+<Note>
+  Spatie integration is **optional**. Install `spatie/laravel-permission` only if you need RBAC features.
+</Note>
+
+## Installation
+
+<Steps>
+
+### Install Spatie Permission
+
+```bash
+composer require spatie/laravel-permission
+```
+
+### Publish Configuration
+
+```bash
+php artisan vendor:publish --provider="Spatie\Permission\PermissionServiceProvider"
+```
+
+### Run Migrations
+
+```bash
+php artisan migrate
+```
+
+This creates tables:
+- `permissions`
+- `roles`
+- `model_has_permissions`
+- `model_has_roles`
+- `role_has_permissions`
+
+### Add Trait to User Model
+
+```php User.php
+use Spatie\Permission\Traits\HasRoles;
+
+class User extends Authenticatable
+{
+    use HasRoles;
+    
+    // Optional: define guard
+    protected $guard_name = 'api';
+}
+```
+
+</Steps>
+
+## Creating Permissions and Roles
+
+### Via Tinker
+
+```bash
+php artisan tinker
+```
+
+```php
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\Models\Permission;
+
+// Create permissions
+$viewProducts = Permission::create(['name' => 'products.view', 'guard_name' => 'api']);
+$createProducts = Permission::create(['name' => 'products.create', 'guard_name' => 'api']);
+$updateProducts = Permission::create(['name' => 'products.update', 'guard_name' => 'api']);
+$deleteProducts = Permission::create(['name' => 'products.delete', 'guard_name' => 'api']);
+
+// Create roles
+$admin = Role::create(['name' => 'admin', 'guard_name' => 'api']);
+$editor = Role::create(['name' => 'editor', 'guard_name' => 'api']);
+$viewer = Role::create(['name' => 'viewer', 'guard_name' => 'api']);
+
+// Assign permissions to roles
+$admin->givePermissionTo(Permission::all());
+$editor->givePermissionTo(['products.view', 'products.create', 'products.update']);
+$viewer->givePermissionTo(['products.view']);
+
+// Assign role to user
+$user = User::find(1);
+$user->assignRole('admin');
+```
+
+### Via Seeder
+
+```php database/seeders/PermissionSeeder.php
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+
+class PermissionSeeder extends Seeder
+{
+    public function run()
+    {
+        // Reset cached roles and permissions
+        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+
+        // Create permissions
+        $permissions = [
+            'products.view',
+            'products.create',
+            'products.update',
+            'products.delete',
+            'categories.view',
+            'categories.create',
+            'categories.update',
+            'categories.delete',
+        ];
+
+        foreach ($permissions as $permission) {
+            Permission::create(['name' => $permission, 'guard_name' => 'api']);
+        }
+
+        // Create roles and assign permissions
+        Role::create(['name' => 'admin', 'guard_name' => 'api'])
+            ->givePermissionTo(Permission::all());
+
+        Role::create(['name' => 'editor', 'guard_name' => 'api'])
+            ->givePermissionTo(['products.view', 'products.create', 'products.update']);
+
+        Role::create(['name' => 'viewer', 'guard_name' => 'api'])
+            ->givePermissionTo(['products.view', 'categories.view']);
+    }
+}
+```
+
+Run seeder:
+
+```bash
+php artisan db:seed --class=PermissionSeeder
+```
+
+## Protecting Endpoints
+
+### Using Middleware
+
+Spatie provides several middleware options:
+
+```php routes/api.php
+use App\Http\Controllers\Api\ProductController;
+
+Route::middleware(['auth:api'])->group(function () {
+    // Require specific permission
+    Route::get('products', [ProductController::class, 'index'])
+        ->middleware('permission:products.view');
+    
+    Route::post('products', [ProductController::class, 'store'])
+        ->middleware('permission:products.create');
+    
+    Route::put('products/{id}', [ProductController::class, 'update'])
+        ->middleware('permission:products.update');
+    
+    Route::delete('products/{id}', [ProductController::class, 'destroy'])
+        ->middleware('permission:products.delete');
+    
+    // Require specific role
+    Route::get('admin/dashboard', [DashboardController::class, 'index'])
+        ->middleware('role:admin');
+    
+    // Require one of multiple roles
+    Route::get('reports', [ReportController::class, 'index'])
+        ->middleware('role:admin|manager');
+});
+```
+
+### Using SpatieAuthorize Middleware
+
+Rest Generic Class includes a custom middleware:
+
+```php routes/api.php
+Route::middleware(['auth:api', 'spatie.authorize'])->group(function () {
+    Route::apiResource('products', ProductController::class);
+});
+```
+
+This middleware:
+1. Resolves the required permission from route metadata
+2. Checks if the user has the permission
+3. Returns 403 if unauthorized
+
+### In Controllers
+
+Check permissions in controller methods:
+
+```php ProductController.php
+public function index()
+{
+    // Check permission
+    if (!auth()->user()->can('products.view')) {
+        abort(403, 'Unauthorized');
+    }
+    
+    return $this->service->list_all(request()->all());
+}
+
+// Or use authorize method
+public function store(ProductRequest $request)
+{
+    $this->authorize('create', Product::class);
+    
+    return $this->service->create($request->all());
+}
+```
+
+## Permission Management API
+
+Rest Generic Class provides the `HasPermissionsController` trait for managing permissions via API.
+
+### Add Trait to Controller
+
+```php PermissionController.php
+use Ronu\RestGenericClass\Core\Traits\HasPermissionsController;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class PermissionController extends RestController
+{
+    use HasPermissionsController;
+}
+```
+
+### Register Routes
+
+```php routes/api.php
+Route::prefix('permissions')->group(function () {
+    Route::get('modules', [PermissionController::class, 'modules']);
+    Route::post('assign_roles', [PermissionController::class, 'assign_roles']);
+    Route::post('assign_users', [PermissionController::class, 'assign_users']);
+});
+```
+
+## Assigning Permissions to Roles
+
+### Basic Assignment
+
+```http
+POST /api/permissions/assign_roles
+Content-Type: application/json
+
+{
+  "roles": ["editor"],
+  "guard": "api",
+  "mode": "ADD",
+  "perms": ["products.view", "products.create"]
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "summary": {
+    "total_roles": 1,
+    "total_permissions": 2,
+    "mode": "ADD"
+  },
+  "per_role": {
+    "editor": {
+      "added": ["products.view", "products.create"],
+      "skipped": []
+    }
+  }
+}
+```
+
+### Modes
+
+#### ADD Mode
+
+Adds permissions without removing existing ones:
+
+```json
+{
+  "roles": ["editor"],
+  "mode": "ADD",
+  "perms": ["products.update"]
+}
+```
+
+Result: Editor now has `[products.view, products.create, products.update]`
+
+#### SYNC Mode
+
+Replaces all permissions with the specified list:
+
+```json
+{
+  "roles": ["editor"],
+  "mode": "SYNC",
+  "perms": ["products.view"]
+}
+```
+
+Result: Editor now has **only** `[products.view]` (others removed)
+
+#### REVOKE Mode
+
+Removes specified permissions:
+
+```json
+{
+  "roles": ["editor"],
+  "mode": "REVOKE",
+  "perms": ["products.create"]
+}
+```
+
+Result: Editor now has `[products.view, products.update]` (create removed)
+
+### Assign to Multiple Roles
+
+```json
+{
+  "roles": ["editor", "manager", "supervisor"],
+  "guard": "api",
+  "mode": "ADD",
+  "perms": ["reports.view", "reports.export"]
+}
+```
+
+### Using Prefix
+
+Add permissions with a prefix:
+
+```json
+{
+  "roles": ["admin"],
+  "guard": "api",
+  "mode": "ADD",
+  "prefix": "products.",
+  "perms": ["view", "create", "update", "delete"]
+}
+```
+
+Expands to: `[products.view, products.create, products.update, products.delete]`
+
+### By Module
+
+Assign all permissions from a module:
+
+```json
+{
+  "roles": ["admin"],
+  "guard": "api",
+  "mode": "ADD",
+  "modules": ["Products", "Categories"]
+}
+```
+
+### By Entity
+
+Assign all CRUD permissions for entities:
+
+```json
+{
+  "roles": ["editor"],
+  "guard": "api",
+  "mode": "ADD",
+  "entities": ["products", "categories"]
+}
+```
+
+Expands to: `[products.view, products.create, products.update, products.delete, categories.view, ...]`
+
+## Assigning Permissions to Users
+
+### By User ID
+
+```http
+POST /api/permissions/assign_users
+Content-Type: application/json
+
+{
+  "users": [10, 12, 15],
+  "by": "id",
+  "guard": "api",
+  "mode": "ADD",
+  "perms": ["reports.view"]
+}
+```
+
+### By Email
+
+```json
+{
+  "users": ["alice@example.com", "bob@example.com"],
+  "by": "email",
+  "guard": "api",
+  "mode": "ADD",
+  "perms": ["admin.access"]
+}
+```
+
+### With Pivot Data
+
+Add extra pivot data (for team-scoped permissions):
+
+```json
+{
+  "users": [10, 12],
+  "by": "id",
+  "guard": "api",
+  "mode": "ADD",
+  "perms": ["projects.edit"],
+  "pivot": {
+    "team_id": 5,
+    "scope": "team"
+  }
+}
+```
+
+## Field-Level Permissions
+
+Restrict which fields users can modify based on their role.
+
+### Setup in Model
+
+```php User.php
+class User extends BaseModel
+{
+    protected array $fieldsByRole = [
+        'superadmin' => ['is_superuser', 'permissions'],
+        'admin' => ['status', 'role_id', 'is_verified'],
+    ];
+}
+```
+
+### How It Works
+
+**User with `editor` role tries to update:**
+
+```http
+PUT /api/v1/users/42
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "is_superuser": true,  // Denied field
+  "status": "active"      // Denied field
+}
+```
+
+**Result:**
+- `name` and `email` are updated ✅ (base fields, no restriction)
+- `is_superuser` is ignored ❌ (only superadmin can modify)
+- `status` is ignored ❌ (only admin can modify)
+
+### Using FilterRequestByRole Middleware
+
+Automatic field filtering:
+
+```php routes/api.php
+Route::middleware(['auth:api', 'filter.request.by.role'])->group(function () {
+    Route::put('users/{id}', [UserController::class, 'update']);
+});
+```
+
+This middleware:
+1. Checks user's roles
+2. Strips denied fields from request before validation
+3. Passes clean request to controller
+
+<Note>
+  Empty `fieldsByRole` means no restrictions (backward compatible).
+</Note>
+
+## Checking Permissions in Blade/Vue
+
+### In Blade Templates
+
+```blade
+@can('products.create')
+    <a href="{{ route('products.create') }}">Create Product</a>
+@endcan
+
+@role('admin')
+    <a href="{{ route('admin.dashboard') }}">Admin Dashboard</a>
+@endrole
+```
+
+### In Vue.js
+
+Pass permissions to frontend:
+
+```php
+// In controller
+return response()->json([
+    'user' => auth()->user(),
+    'permissions' => auth()->user()->getAllPermissions()->pluck('name'),
+    'roles' => auth()->user()->getRoleNames(),
+]);
+```
+
+Check in Vue:
+
+```vue
+<template>
+  <button v-if="can('products.create')" @click="createProduct">
+    Create Product
+  </button>
+</template>
+
+<script>
+export default {
+  computed: {
+    permissions() {
+      return this.$store.state.user.permissions;
+    }
+  },
+  methods: {
+    can(permission) {
+      return this.permissions.includes(permission);
+    }
+  }
+}
+</script>
+```
+
+## Common Patterns
+
+### CRUD Permissions
+
+Standard naming convention:
+
+```
+{entity}.view      // List and show
+{entity}.create    // Create new records
+{entity}.update    // Update existing records
+{entity}.delete    // Delete records
+```
+
+Example:
+
+```
+products.view
+products.create
+products.update
+products.delete
+```
+
+### Admin vs User Permissions
+
+```php
+// Admin can do everything
+$admin = Role::create(['name' => 'admin']);
+$admin->givePermissionTo(Permission::all());
+
+// User can only view
+$user = Role::create(['name' => 'user']);
+$user->givePermissionTo([
+    'products.view',
+    'categories.view',
+]);
+```
+
+### Wildcard Permissions
+
+Spatie doesn't support wildcards, but you can implement them:
+
+```php
+// Helper method
+function canAny($permissions)
+{
+    foreach ($permissions as $permission) {
+        if (auth()->user()->can($permission)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Usage
+if (canAny(['products.*', 'admin.*'])) {
+    // User has any product or admin permission
+}
+```
+
+## Troubleshooting
+
+### Permission Not Working
+
+**Symptom:** User with permission still gets 403
+
+**Checks:**
+1. Clear permission cache: `php artisan permission:cache-reset`
+2. Verify guard matches: `'guard_name' => 'api'`
+3. Check user has role: `$user->roles`
+4. Check role has permission: `$role->permissions`
+
+### Cache Issues
+
+**Symptom:** Permission changes don't take effect
+
+**Cause:** Spatie caches permissions for performance
+
+**Solution:**
+
+```bash
+php artisan permission:cache-reset
+
+# Or in code
+app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+```
+
+### Wrong Guard
+
+**Symptom:** "User does not have the right permissions"
+
+**Cause:** Guard mismatch (web vs api)
+
+**Solution:**
+
+Ensure consistency:
+
+```php
+// In User model
+protected $guard_name = 'api';
+
+// When creating permissions
+Permission::create(['name' => 'products.view', 'guard_name' => 'api']);
+
+// In middleware
+Route::middleware(['auth:api', 'permission:products.view']);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Middleware Reference" icon="shield" href="/api-reference/middleware">
+    Complete middleware documentation
+  </Card>
+  <Card title="Many-to-Many" icon="diagram-project" href="/guides/many-to-many">
+    Secure pivot table operations with permissions
+  </Card>
+  <Card title="Testing" icon="vial" href="/testing/permissions">
+    Test permission-protected endpoints
+  </Card>
+  <Card title="Spatie Docs" icon="book" href="https://spatie.be/docs/laravel-permission">
+    Official Spatie Laravel Permission docs
+  </Card>
+</CardGroup>
+
+## Evidence
+
+- **File:** `src/Core/Traits/HasPermissionsController.php`  
+  **Lines:** 1-153 (entire file)  
+  Implements `assign_roles()` and `assign_users()` endpoints
+
+- **File:** `src/Core/Models/BaseModel.php`  
+  **Lines:** 57-138  
+  Defines `fieldsByRole` and `getDeniedFieldsForUser()` for field-level permissions
+
+- **File:** `src/Core/Middleware/SpatieAuthorize.php`  
+  Middleware for automatic permission checking
+
+- **File:** `README.md`  
+  **Lines:** 207-220  
+  Shows permission sync example

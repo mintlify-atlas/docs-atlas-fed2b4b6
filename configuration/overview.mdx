@@ -1,0 +1,186 @@
+---
+title: Configuration Overview
+description: Learn how to configure the Rest Generic Class Laravel package
+---
+
+The Rest Generic Class package provides a comprehensive configuration system that controls logging, filtering, caching, and validation behavior. All settings can be customized through the published configuration file and environment variables.
+
+## Publishing the Configuration File
+
+Publish the package configuration to your Laravel application:
+
+```bash
+php artisan vendor:publish --tag=rest-generic-class-config
+```
+
+This creates `config/rest-generic-class.php` in your application, allowing you to customize all package settings.
+
+<Note>
+Publishing the configuration file is **optional**. The package works with sensible defaults out of the box.
+</Note>
+
+## Configuration Structure
+
+The configuration file is organized into four main sections:
+
+### Logging
+
+Controls how the package logs operations and queries:
+
+```php
+'logging' => [
+    'rest-generic-class' => [
+        'driver' => 'single',
+        'path' => storage_path('logs/rest-generic-class.log'),
+        'level' => env('LOG_LEVEL', 'debug'),
+    ],
+    'query' => env('LOG_QUERY', false),
+],
+```
+
+- **Dedicated log channel** for package operations
+- **Query logging** for debugging API requests
+- Configurable log level via `LOG_LEVEL` environment variable
+
+### Filtering
+
+Controls how API requests are filtered and validated:
+
+```php
+'filtering' => [
+    'max_depth' => 5,
+    'max_conditions' => 100,
+    'strict_relations' => true,
+    'validate_columns' => env('REST_VALIDATE_COLUMNS', true),
+    'strict_column_validation' => env('REST_STRICT_COLUMNS', true),
+    'column_cache_ttl' => 3600,
+],
+```
+
+- **Safety limits** prevent excessive filter complexity
+- **Column validation** ensures only valid columns are queried
+- **Relation validation** requires explicit relation declarations
+- **Column list caching** improves performance
+
+### Validation
+
+Controls database existence validation caching:
+
+```php
+'validation' => [
+    'cache_enabled' => env('REST_VALIDATION_CACHE_ENABLED', true),
+    'cache_ttl' => (int)env('REST_VALIDATION_CACHE_TTL', 3600),
+    'cache_prefix' => env('REST_VALIDATION_CACHE_PREFIX', 'validation'),
+    'connection' => env('REST_VALIDATION_CONNECTION', 'db'),
+],
+```
+
+- **Validation query caching** reduces database load
+- **Configurable connection** for validation queries
+- **Custom cache prefix** for key organization
+
+### Cache
+
+Controls response caching for read operations:
+
+```php
+'cache' => [
+    'enabled' => env('REST_CACHE_ENABLED', false),
+    'store' => env('REST_CACHE_STORE', env('CACHE_STORE')),
+    'ttl' => (int)env('REST_CACHE_TTL', 60),
+    'ttl_by_method' => [
+        'list_all' => (int)env('REST_CACHE_TTL_LIST', 60),
+        'get_one' => (int)env('REST_CACHE_TTL_ONE', 30),
+    ],
+    'cacheable_methods' => ['list_all', 'get_one'],
+    'vary' => [
+        'headers' => ['Accept-Language', 'X-Tenant-Id'],
+    ],
+],
+```
+
+- **Store-agnostic** caching (Redis, database, file, etc.)
+- **Method-specific TTLs** for different operation types
+- **Multi-tenant and locale-aware** cache keys
+- **Automatic invalidation** on write operations
+
+## Common Configuration Patterns
+
+### Development Environment
+
+For local development, enable verbose logging and disable caching:
+
+```env
+LOG_LEVEL=debug
+LOG_QUERY=true
+REST_CACHE_ENABLED=false
+```
+
+### Production Environment
+
+For production, use Redis caching with appropriate TTLs:
+
+```env
+LOG_LEVEL=error
+LOG_QUERY=false
+REST_CACHE_ENABLED=true
+REST_CACHE_STORE=redis
+REST_CACHE_TTL=300
+REST_CACHE_TTL_LIST=300
+REST_CACHE_TTL_ONE=600
+```
+
+### High-Security Applications
+
+Enable strict validation and disable lenient behaviors:
+
+```env
+REST_VALIDATE_COLUMNS=true
+REST_STRICT_COLUMNS=true
+```
+
+### Multi-Tenant Applications
+
+Ensure cache varies by tenant header:
+
+```php
+'cache' => [
+    'vary' => [
+        'headers' => ['Accept-Language', 'X-Tenant-Id'],
+    ],
+],
+```
+
+<Warning>
+Cache varies by headers listed in `cache.vary.headers` by default. If you use different tenant identification headers, update this configuration to prevent cross-tenant data leaks.
+</Warning>
+
+## Configuration Caching
+
+Laravel's configuration caching affects how environment variables are read:
+
+```bash
+# Cache configuration for production
+php artisan config:cache
+
+# Clear cached configuration
+php artisan config:clear
+```
+
+<Note>
+When configuration is cached, changes to `.env` files won't take effect until you run `php artisan config:clear` or re-cache with `php artisan config:cache`.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="code" href="/configuration/environment-variables">
+    Complete reference of all environment variables
+  </Card>
+  <Card title="Cache Strategy" icon="database" href="/configuration/cache-strategy">
+    Learn about cache configuration and invalidation
+  </Card>
+  <Card title="Validation Config" icon="shield-check" href="/configuration/validation">
+    Configure validation caching and rules
+  </Card>
+</CardGroup>

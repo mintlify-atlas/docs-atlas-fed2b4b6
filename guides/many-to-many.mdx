@@ -1,0 +1,700 @@
+---
+title: "Many-to-Many Relationships"
+description: "Manage pivot tables with attach, detach, sync, and toggle operations"
+---
+
+Rest Generic Class provides a powerful trait for managing many-to-many relationships with full CRUD support, pivot data, and complex filtering. This guide covers the `ManagesManyToMany` trait for controllers that expose belongsToMany relationships.
+
+## Overview
+
+The trait provides:
+
+- **List and show** related entities with filtering, pagination, and ordering
+- **Create and update** related models through the relationship
+- **Delete** related models (with optional cascade)
+- **Attach/detach** existing entities (pivot-only operations)
+- **Sync** the entire relationship set
+- **Toggle** specific IDs
+- **Update pivot** fields without modifying the related model
+- **Export** related entities to Excel/PDF
+
+## Setup
+
+<Steps>
+
+### Define the Relationship
+
+Add the many-to-many relationship to your parent model:
+
+```php User.php
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+
+class User extends BaseModel
+{
+    const RELATIONS = ['addresses'];
+
+    public function addresses(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Address::class,
+            'user_addresses',    // Pivot table
+            'user_id',           // Foreign key for this model
+            'address_id'         // Foreign key for related model
+        )
+        ->withPivot(['is_primary', 'label', 'expires_at'])
+        ->withTimestamps();
+    }
+}
+```
+
+<Note>
+  Use `->withPivot()` to include custom pivot columns in responses. Without it, pivot data won't be visible.
+</Note>
+
+### Add the Trait to Your Controller
+
+```php UserController.php
+use Ronu\RestGenericClass\Core\Traits\ManagesManyToMany;
+
+class UserController extends RestController
+{
+    use ManagesManyToMany;
+
+    protected array $manyToManyConfig = [
+        'addresses' => [
+            'relationship'  => 'addresses',        // BelongsToMany method name
+            'relatedModel'  => Address::class,
+            'pivotModel'    => UserAddress::class,
+            'parentModel'   => User::class,
+            'parentKey'     => 'user_id',
+            'relatedKey'    => 'address_id',
+
+            'mutation' => [
+                'dataKey'       => ['Addresses', 'addresses'],
+                'deleteRelated' => true,
+                'pivotColumns'  => ['is_primary', 'label', 'expires_at'],
+            ],
+        ],
+    ];
+}
+```
+
+### Register Routes
+
+Use the `inject` middleware to set `_relation` and `_scenario`:
+
+```php routes/api.php
+Route::prefix('users/{user_id}/addresses')->group(function () {
+    // List and show
+    Route::get('/', [UserController::class, 'listRelation'])
+        ->middleware('inject:_relation,addresses');
+    
+    Route::get('/{relatedId}', [UserController::class, 'showRelation'])
+        ->middleware('inject:_relation,addresses');
+    
+    // Attach operations
+    Route::post('/', [UserController::class, 'attachRelation'])
+        ->middleware('inject:_relation,addresses,_scenario,attach');
+    
+    Route::post('/sync', [UserController::class, 'attachRelation'])
+        ->middleware('inject:_relation,addresses,_scenario,sync');
+    
+    // Detach
+    Route::delete('/{relatedId}', [UserController::class, 'detachRelation'])
+        ->middleware('inject:_relation,addresses,_scenario,detach');
+    
+    // Update pivot
+    Route::put('/{relatedId}/pivot', [UserController::class, 'updatePivotRelation'])
+        ->middleware('inject:_relation,addresses,_scenario,update_pivot');
+});
+```
+
+</Steps>
+
+## Configuration Reference
+
+### Required Fields
+
+| Field | Description | Example |
+|-------|-------------|----------|
+| `relationship` | BelongsToMany method name on parent model | `'addresses'` |
+| `relatedModel` | Fully qualified class name of related model | `Address::class` |
+| `pivotModel` | Fully qualified class name of pivot model | `UserAddress::class` |
+| `parentModel` | Fully qualified class name of parent model | `User::class` |
+| `parentKey` | Foreign key column for parent in pivot table | `'user_id'` |
+| `relatedKey` | Foreign key column for related model in pivot | `'address_id'` |
+
+### Mutation Config (Optional)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dataKey` | `string\|array` | `[]` | Keys to extract bulk data from request body |
+| `deleteRelated` | `bool` | `true` | Delete related model when `deleteRelation` is called |
+| `pivotColumns` | `array` | `[]` | Whitelist of allowed pivot columns (empty = allow all) |
+
+## Listing Related Entities
+
+List all addresses for a user:
+
+```http
+GET /api/v1/users/42/addresses
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "street": "123 Main St",
+      "city": "New York",
+      "state": "NY",
+      "zip": "10001",
+      "pivot": {
+        "user_id": 42,
+        "address_id": 1,
+        "is_primary": true,
+        "label": "Home",
+        "created_at": "2026-01-01T00:00:00.000000Z"
+      }
+    },
+    {
+      "id": 2,
+      "street": "456 Broadway",
+      "city": "New York",
+      "state": "NY",
+      "zip": "10002",
+      "pivot": {
+        "user_id": 42,
+        "address_id": 2,
+        "is_primary": false,
+        "label": "Work",
+        "created_at": "2026-02-15T00:00:00.000000Z"
+      }
+    }
+  ]
+}
+```
+
+### With Filtering
+
+```http
+GET /api/v1/users/42/addresses
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": ["state|=|NY", "is_primary|=|true"]
+  }
+}
+```
+
+### With Pagination
+
+```http
+GET /api/v1/users/42/addresses
+Content-Type: application/json
+
+{
+  "pagination": {
+    "page": 1,
+    "pageSize": 10
+  }
+}
+```
+
+### With Ordering
+
+```http
+GET /api/v1/users/42/addresses
+Content-Type: application/json
+
+{
+  "orderby": [{"label": "asc"}]
+}
+```
+
+## Showing a Single Related Entity
+
+```http
+GET /api/v1/users/42/addresses/1
+```
+
+Response:
+
+```json
+{
+  "id": 1,
+  "street": "123 Main St",
+  "city": "New York",
+  "state": "NY",
+  "zip": "10001",
+  "pivot": {
+    "user_id": 42,
+    "address_id": 1,
+    "is_primary": true,
+    "label": "Home"
+  }
+}
+```
+
+## Attach Operations
+
+Attach operations link existing entities without creating new ones.
+
+### Single Attach
+
+Attach address ID 5 with pivot data:
+
+```http
+POST /api/v1/users/42/addresses
+Content-Type: application/json
+
+{
+  "address_id": 5,
+  "is_primary": true,
+  "label": "Home"
+}
+```
+
+Response:
+
+```json
+{
+  "attached": [5]
+}
+```
+
+### Bulk Attach
+
+Attach multiple addresses at once:
+
+```http
+POST /api/v1/users/42/addresses/bulk
+Content-Type: application/json
+
+{
+  "addresses": [
+    {"address_id": 5, "is_primary": true, "label": "Home"},
+    {"address_id": 8, "is_primary": false, "label": "Work"}
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "attached": [5, 8]
+}
+```
+
+## Sync Operation
+
+Sync replaces the entire relationship set. IDs not in the sync payload are detached.
+
+### Sync with ID Array
+
+```http
+POST /api/v1/users/42/addresses/sync
+Content-Type: application/json
+
+[1, 2, 3]
+```
+
+Result:
+- User 42 now has exactly 3 addresses (1, 2, 3)
+- Any other addresses are detached
+- No pivot data is updated
+
+### Sync with Objects
+
+```http
+POST /api/v1/users/42/addresses/sync
+Content-Type: application/json
+
+[
+  {"address_id": 1, "is_primary": true, "label": "Home"},
+  {"address_id": 2, "is_primary": false, "label": "Work"},
+  {"address_id": 3, "label": "Vacation"}
+]
+```
+
+### Sync with Laravel Map Format
+
+```http
+POST /api/v1/users/42/addresses/sync
+Content-Type: application/json
+
+{
+  "1": {"is_primary": true, "label": "Home"},
+  "2": {"is_primary": false, "label": "Work"},
+  "3": {"label": "Vacation"}
+}
+```
+
+Response (all formats):
+
+```json
+{
+  "attached": [2, 3],
+  "detached": [7, 9],
+  "updated": [1]
+}
+```
+
+## Toggle Operation
+
+Toggle reverses the attachment status: attached IDs become detached, detached IDs become attached.
+
+```http
+POST /api/v1/users/42/addresses/toggle
+Content-Type: application/json
+
+[1, 2, 3]
+```
+
+Before:
+- User has addresses: [1, 5, 7]
+
+After toggle:
+- User has addresses: [2, 3, 5, 7]
+- 1 was detached (was attached)
+- 2 and 3 were attached (were detached)
+- 5 and 7 unchanged (not in toggle list)
+
+Response:
+
+```json
+{
+  "attached": [2, 3],
+  "detached": [1]
+}
+```
+
+## Detach Operations
+
+### Single Detach
+
+Remove the pivot row (keeps the Address model):
+
+```http
+DELETE /api/v1/users/42/addresses/5
+```
+
+Response:
+
+```json
+{
+  "detached": 1
+}
+```
+
+### Bulk Detach
+
+```http
+DELETE /api/v1/users/42/addresses/bulk
+Content-Type: application/json
+
+[5, 8, 12]
+```
+
+Response:
+
+```json
+{
+  "detached": 3
+}
+```
+
+## Update Pivot Fields
+
+Update pivot data without changing the related model.
+
+### Single Pivot Update
+
+```http
+PUT /api/v1/users/42/addresses/5/pivot
+Content-Type: application/json
+
+{
+  "is_primary": true,
+  "label": "Main Office"
+}
+```
+
+Response:
+
+```json
+{
+  "id": 5,
+  "street": "123 Main St",
+  "pivot": {
+    "user_id": 42,
+    "address_id": 5,
+    "is_primary": true,
+    "label": "Main Office"
+  }
+}
+```
+
+### Bulk Pivot Update
+
+```http
+PUT /api/v1/users/42/addresses/pivot/bulk
+Content-Type: application/json
+
+{
+  "addresses": [
+    {"address_id": 5, "is_primary": true, "label": "Main Office"},
+    {"address_id": 8, "is_primary": false, "label": "Warehouse"}
+  ]
+}
+```
+
+## Pivot Column Whitelist
+
+The `pivotColumns` config provides a security whitelist:
+
+```php
+'mutation' => [
+    'pivotColumns' => ['is_primary', 'label', 'expires_at'],
+],
+```
+
+### How It Works
+
+With the whitelist above:
+
+**Request:**
+
+```json
+{
+  "address_id": 5,
+  "is_primary": true,
+  "label": "Home",
+  "approved_at": "2025-01-01",
+  "internal_notes": "VIP customer"
+}
+```
+
+**Actual pivot data stored:**
+
+```json
+{
+  "is_primary": true,
+  "label": "Home"
+}
+```
+
+`approved_at` and `internal_notes` are silently stripped (not in whitelist).
+
+<Note>
+  When `pivotColumns` is empty or not set, **all** pivot columns are accepted (backward compatible).
+</Note>
+
+## Create and Update Related Models
+
+Create new related entities through the relationship.
+
+### Create Single
+
+```http
+POST /api/v1/users/42/addresses/create
+Content-Type: application/json
+
+{
+  "street": "789 Park Ave",
+  "city": "New York",
+  "state": "NY",
+  "zip": "10003"
+}
+```
+
+Response (201 Created):
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 15,
+    "street": "789 Park Ave",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10003"
+  }
+}
+```
+
+### Create Bulk
+
+```http
+POST /api/v1/users/42/addresses/create/bulk
+Content-Type: application/json
+
+{
+  "addresses": [
+    {"street": "111 First St", "city": "Boston", "state": "MA", "zip": "02101"},
+    {"street": "222 Second St", "city": "Boston", "state": "MA", "zip": "02102"}
+  ]
+}
+```
+
+### Update Related Model
+
+```http
+PUT /api/v1/users/42/addresses/5
+Content-Type: application/json
+
+{
+  "street": "123 Main Street",
+  "zip": "10001-5555"
+}
+```
+
+## Delete Related Models
+
+By default, deleting a relation also deletes the related model.
+
+### Single Delete
+
+```http
+DELETE /api/v1/users/42/addresses/5/delete
+```
+
+This:
+1. Detaches the address from user 42
+2. Deletes the Address model (if `deleteRelated=true`)
+
+Response:
+
+```json
+{
+  "success": true,
+  "model": {
+    "id": 5,
+    "street": "123 Main St",
+    ...
+  }
+}
+```
+
+### Pivot-Only Removal
+
+To keep the Address model and only remove the pivot row, configure:
+
+```php
+'mutation' => [
+    'deleteRelated' => false,
+],
+```
+
+Now `DELETE` only removes the pivot row.
+
+## Export Related Entities
+
+### Export to Excel
+
+```http
+GET /api/v1/users/42/addresses/export/excel?filename=user-addresses.xlsx
+```
+
+Optional parameters:
+- `columns`: Specify columns to export
+- `select`, `oper`, `orderby`: Apply filters before export
+
+### Export to PDF
+
+```http
+GET /api/v1/users/42/addresses/export/pdf?filename=addresses.pdf&template=pdf
+```
+
+## Real-World Examples
+
+### User Addresses (CRM)
+
+```php UserController.php
+protected array $manyToManyConfig = [
+    'addresses' => [
+        'relationship'  => 'addresses',
+        'relatedModel'  => Address::class,
+        'pivotModel'    => UserAddress::class,
+        'parentModel'   => User::class,
+        'parentKey'     => 'user_id',
+        'relatedKey'    => 'address_id',
+        'mutation' => [
+            'dataKey'       => ['Addresses', 'addresses'],
+            'deleteRelated' => false, // Keep addresses when detaching
+            'pivotColumns'  => ['is_primary', 'label', 'address_type'],
+        ],
+    ],
+];
+```
+
+### Product Tags (E-commerce)
+
+```php ProductController.php
+protected array $manyToManyConfig = [
+    'tags' => [
+        'relationship'  => 'tags',
+        'relatedModel'  => Tag::class,
+        'pivotModel'    => ProductTag::class,
+        'parentModel'   => Product::class,
+        'parentKey'     => 'product_id',
+        'relatedKey'    => 'tag_id',
+        'mutation' => [
+            'dataKey'       => ['Tags', 'tags'],
+            'deleteRelated' => false, // Keep tags when detaching
+            'pivotColumns'  => ['sort_order'],
+        ],
+    ],
+];
+```
+
+### Course Enrollments (LMS)
+
+```php CourseController.php
+protected array $manyToManyConfig = [
+    'students' => [
+        'relationship'  => 'students',
+        'relatedModel'  => User::class,
+        'pivotModel'    => Enrollment::class,
+        'parentModel'   => Course::class,
+        'parentKey'     => 'course_id',
+        'relatedKey'    => 'user_id',
+        'mutation' => [
+            'dataKey'       => ['Students', 'students'],
+            'deleteRelated' => false,
+            'pivotColumns'  => ['enrolled_at', 'completed_at', 'grade', 'status'],
+        ],
+    ],
+];
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Relation Loading" icon="link" href="/guides/relation-loading">
+    Learn eager loading for many-to-many relationships
+  </Card>
+  <Card title="Bulk Operations" icon="layer-group" href="/guides/bulk-operations">
+    Optimize bulk attach/detach operations
+  </Card>
+  <Card title="Permissions" icon="shield-halved" href="/guides/permissions">
+    Secure many-to-many endpoints with Spatie
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/many-to-many">
+    Complete many-to-many API reference
+  </Card>
+</CardGroup>
+
+## Evidence
+
+- **File:** `src/Core/Traits/ManagesManyToMany.php`  
+  **Lines:** 16-1191 (entire file)  
+  Implements all many-to-many operations including listRelation, attachRelation, detachRelation, updatePivotRelation
+
+- **File:** `documentacion/doc-en/03-usage/05-many-to-many.md`  
+  **Lines:** 1-391  
+  Complete documentation of the trait with examples and configuration

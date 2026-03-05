@@ -1,0 +1,386 @@
+---
+title: TransformData
+description: Middleware for transforming and validating incoming request data
+---
+
+## Overview
+
+The `TransformData` middleware handles data transformation and validation for mutation operations (POST, PUT, PATCH, DELETE). It automatically injects route parameters (including Route Model Binding) into the request before passing data to your FormRequest class for validation.
+
+<Note>
+This middleware only processes requests with HTTP methods: `POST`, `PUT`, `PATCH`, and `DELETE`. Other methods pass through without validation.
+</Note>
+
+## Parameters
+
+<ParamField path="formRequestClass" type="string" required>
+  Fully-qualified FormRequest class name that extends `Illuminate\Foundation\Http\FormRequest`
+</ParamField>
+
+## Usage
+
+### In Routes
+
+```php
+use App\Http\Requests\StoreUserRequest;
+use App\Http\Controllers\UserController;
+use Illuminate\Support\Facades\Route;
+
+Route::post('/users', [UserController::class, 'store'])
+    ->middleware('data.transform:App\\Http\\Requests\\StoreUserRequest');
+
+Route::put('/users/{user}', [UserController::class, 'update'])
+    ->middleware('data.transform:App\\Http\\Requests\\UpdateUserRequest');
+```
+
+### In Controllers
+
+```php
+namespace App\Http\Controllers;
+
+use App\Http\Requests\StoreUserRequest;
+use App\Http\Requests\UpdateUserRequest;
+
+class UserController extends Controller
+{
+    public function __construct()
+    {
+        $this->middleware('data.transform:' . StoreUserRequest::class)
+            ->only('store');
+
+        $this->middleware('data.transform:' . UpdateUserRequest::class)
+            ->only('update');
+    }
+
+    public function store(Request $request)
+    {
+        // Data is already validated
+        $user = User::create($request->all());
+        return response()->json($user, 201);
+    }
+
+    public function update(Request $request, User $user)
+    {
+        // Data is already validated, route param injected
+        $user->update($request->all());
+        return response()->json($user);
+    }
+}
+```
+
+### With Multiple Methods
+
+```php
+public function __construct()
+{
+    $this->middleware('data.transform:App\\Http\\Requests\\UserRequest')
+        ->only(['store', 'update', 'destroy']);
+}
+```
+
+## FormRequest Requirements
+
+Your FormRequest class must implement the `validate_request()` method:
+
+```php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class StoreUserRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users',
+            'password' => 'required|min:8|confirmed',
+        ];
+    }
+
+    /**
+     * Required method for TransformData middleware
+     */
+    public function validate_request(): void
+    {
+        $this->validate($this->rules());
+    }
+}
+```
+
+## Route Parameter Injection
+
+The middleware automatically injects route parameters into the request, making them available during validation.
+
+### Basic Parameter Injection
+
+```php
+// Route
+Route::put('/users/{id}', [UserController::class, 'update'])
+    ->middleware('data.transform:App\\Http\\Requests\\UpdateUserRequest');
+
+// FormRequest
+class UpdateUserRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            // Access injected route parameter
+            'email' => 'required|email|unique:users,email,' . $this->id,
+        ];
+    }
+
+    public function validate_request(): void
+    {
+        $this->validate($this->rules());
+    }
+}
+```
+
+### Route Model Binding
+
+When using Route Model Binding, the middleware extracts the model's primary key:
+
+```php
+// Route with model binding
+Route::put('/users/{user}', [UserController::class, 'update'])
+    ->middleware('data.transform:App\\Http\\Requests\\UpdateUserRequest');
+
+// FormRequest
+class UpdateUserRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            // 'user' contains the model's ID (e.g., $user->id)
+            'email' => 'required|email|unique:users,email,' . $this->user,
+        ];
+    }
+
+    public function validate_request(): void
+    {
+        $this->validate($this->rules());
+    }
+}
+```
+
+### Multiple Route Parameters
+
+```php
+// Route
+Route::put('/organizations/{organization}/users/{user}', [
+    OrganizationUserController::class, 'update'
+])->middleware('data.transform:App\\Http\\Requests\\UpdateOrgUserRequest');
+
+// FormRequest
+class UpdateOrgUserRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'email' => [
+                'required',
+                'email',
+                // Both parameters available
+                Rule::unique('users', 'email')
+                    ->where('organization_id', $this->organization)
+                    ->ignore($this->user)
+            ],
+        ];
+    }
+
+    public function validate_request(): void
+    {
+        $this->validate($this->rules());
+    }
+}
+```
+
+## Error Handling
+
+### Missing FormRequest Class
+
+```php
+// throws InvalidArgumentException
+Route::post('/users', [UserController::class, 'store'])
+    ->middleware('data.transform:App\\Http\\Requests\\NonExistentRequest');
+
+// Error message:
+"FormRequest class [App\Http\Requests\NonExistentRequest] does not exist"
+```
+
+### Missing validate_request Method
+
+```php
+// throws BadMethodCallException
+"Class [App\Http\Requests\UserRequest] must implement validate_request() method"
+```
+
+### Validation Failures
+
+Validation exceptions are passed through with a 422 response:
+
+```json
+{
+  "message": "The given data was invalid.",
+  "errors": {
+    "email": [
+      "The email has already been taken."
+    ],
+    "password": [
+      "The password must be at least 8 characters."
+    ]
+  }
+}
+```
+
+## Complete Example
+
+### Route Definition
+
+```php
+use App\Http\Controllers\ArticleController;
+use App\Http\Requests\ArticleRequest;
+
+Route::middleware('data.transform:' . ArticleRequest::class)
+    ->group(function () {
+        Route::post('/articles', [ArticleController::class, 'store']);
+        Route::put('/articles/{article}', [ArticleController::class, 'update']);
+    });
+```
+
+### FormRequest
+
+```php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class ArticleRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        $articleId = $this->route('article'); // Injected by middleware
+
+        return [
+            'title' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('articles', 'title')->ignore($articleId),
+            ],
+            'slug' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('articles', 'slug')->ignore($articleId),
+            ],
+            'content' => 'required|string|min:100',
+            'status' => 'required|in:draft,published,archived',
+            'published_at' => 'nullable|date',
+            'category_id' => 'required|exists:categories,id',
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
+        ];
+    }
+
+    public function validate_request(): void
+    {
+        $this->validate($this->rules());
+    }
+
+    public function messages(): array
+    {
+        return [
+            'title.required' => 'Please provide a title for the article.',
+            'content.min' => 'Article content must be at least 100 characters.',
+        ];
+    }
+}
+```
+
+### Controller
+
+```php
+namespace App\Http\Controllers;
+
+use App\Models\Article;
+use Illuminate\Http\Request;
+
+class ArticleController extends Controller
+{
+    public function store(Request $request)
+    {
+        // No need to validate - already done by middleware
+        $article = Article::create($request->all());
+
+        return response()->json($article, 201);
+    }
+
+    public function update(Request $request, Article $article)
+    {
+        // No need to validate - already done by middleware
+        $article->update($request->all());
+
+        return response()->json($article);
+    }
+}
+```
+
+## HTTP Methods
+
+The middleware only processes these methods:
+
+- `POST` - Create operations
+- `PUT` - Full update operations
+- `PATCH` - Partial update operations
+- `DELETE` - Delete operations (when validation needed)
+
+All other methods (`GET`, `HEAD`, `OPTIONS`) pass through without validation.
+
+## Configuration Errors
+
+### Non-Production Environments
+
+Strict validation ensures proper configuration:
+
+```php
+// Missing parameter
+->middleware('data.transform')
+// throws InvalidArgumentException:
+// "TransformData middleware requires a FormRequest class as parameter.
+//  Usage: middleware(\"data.transform:{PathToYour\\FormRequestClass}\")"
+```
+
+### Runtime Errors
+
+Unexpected errors are logged with context:
+
+```php
+logger()->error('TransformData: Unexpected validation error', [
+    'form_request' => $formRequestClass,
+    'method' => $request->method(),
+    'path' => $request->path(),
+    'error' => $e->getMessage(),
+]);
+```
+
+## See Also
+
+- [FilterRequestByRole Middleware](/api/middleware/filter-request-by-role) - Role-based field filtering
+- [InjectRequestParams Middleware](/api/middleware/inject-request-params) - Parameter injection
+- [Validation Rules](/api/validation/overview) - Custom validation rules

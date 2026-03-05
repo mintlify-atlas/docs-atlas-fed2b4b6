@@ -1,0 +1,303 @@
+---
+title: DatabaseErrorParser
+description: Parse database errors into user-friendly messages with suggestions for PostgreSQL, MySQL, SQL Server, and MongoDB
+---
+
+## Overview
+
+The `DatabaseErrorParser` class parses database errors from different engines (PostgreSQL, MySQL, SQL Server, MongoDB) and provides human-friendly error messages with actionable suggestions. It covers SELECT, INSERT, UPDATE, and DELETE errors including constraint violations, syntax errors, and data type issues.
+
+## Class Reference
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\DatabaseErrorParser;
+```
+
+## Methods
+
+### parse()
+
+Parse database exception and return structured error information.
+
+```php
+public static function parse(\Throwable $exception): array
+```
+
+<ParamField path="exception" type="\Throwable" required>
+  The database exception to parse (PDOException, QueryException, etc.)
+</ParamField>
+
+<ResponseField name="return" type="array">
+  Structured error information with the following keys:
+  
+  <Expandable title="Response Structure">
+    <ResponseField name="title" type="string">
+      User-friendly error title (e.g., "Column Not Found", "Duplicate Entry")
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Detailed error description explaining what went wrong
+    </ResponseField>
+    
+    <ResponseField name="hint" type="string|null">
+      Database-provided hint (mainly from PostgreSQL HINT messages)
+    </ResponseField>
+    
+    <ResponseField name="error_type" type="string">
+      Error type identifier (e.g., "unique_violation", "foreign_key_violation", "not_null_violation")
+    </ResponseField>
+    
+    <ResponseField name="details" type="array">
+      Extracted error details including:
+      - `column`: Affected column name
+      - `table`: Affected table name
+      - `constraint`: Constraint name
+      - `sqlstate`: SQL state code
+      - `database_driver`: Database driver (pgsql, mysql, sqlsrv, mongodb)
+    </ResponseField>
+    
+    <ResponseField name="suggestion" type="string|null">
+      Actionable suggestion for fixing the error
+    </ResponseField>
+    
+    <ResponseField name="operation" type="string|null">
+      SQL operation type (SELECT, INSERT, UPDATE, DELETE)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example Usage
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\DatabaseErrorParser;
+
+try {
+    // Database operation that fails
+    DB::table('users')->insert([
+        'email' => 'duplicate@example.com'
+    ]);
+} catch (\Throwable $e) {
+    $error = DatabaseErrorParser::parse($e);
+    
+    // Returns:
+    // [
+    //   'title' => 'Duplicate Entry',
+    //   'description' => 'Cannot insert duplicate entry...',
+    //   'hint' => null,
+    //   'error_type' => 'duplicate_entry',
+    //   'details' => [
+    //     'duplicate_value' => 'duplicate@example.com',
+    //     'index' => 'users_email_unique',
+    //     'database_driver' => 'mysql'
+    //   ],
+    //   'suggestion' => 'Either use a different value or update...',
+    //   'operation' => 'INSERT'
+    // ]
+}
+```
+
+---
+
+### toExceptionError()
+
+Convert parsed error to a DatabaseErrorParserException with JSON response format.
+
+```php
+public static function toExceptionError(array $parsedError, int $statusCode = 400): \DatabaseErrorParserException
+```
+
+<ParamField path="parsedError" type="array" required>
+  The parsed error array from `parse()` method
+</ParamField>
+
+<ParamField path="statusCode" type="int" default="400">
+  HTTP status code for the exception
+</ParamField>
+
+<ResponseField name="throws" type="DatabaseErrorParserException">
+  Exception with JSON-encoded error details in the message
+</ResponseField>
+
+#### Example Usage
+
+```php
+try {
+    DB::table('users')->insert(['email' => null]);
+} catch (\Throwable $e) {
+    $parsed = DatabaseErrorParser::parse($e);
+    
+    // Throw formatted exception
+    DatabaseErrorParser::toExceptionError($parsed, 422);
+    
+    // Exception message contains JSON:
+    // {
+    //   "error": {
+    //     "title": "NULL Value Not Allowed",
+    //     "message": "Column 'email' cannot be NULL",
+    //     "type": "not_null_violation",
+    //     "operation": "INSERT",
+    //     "suggestion": "Provide a value for 'email'...",
+    //     "details": { ... } // Only in debug mode
+    //   }
+    // }
+}
+```
+
+---
+
+### toPlainText()
+
+Format parsed error as plain text for logging.
+
+```php
+public static function toPlainText(array $parsedError): string
+```
+
+<ParamField path="parsedError" type="array" required>
+  The parsed error array from `parse()` method
+</ParamField>
+
+<ResponseField name="return" type="string">
+  Formatted plain text error message
+</ResponseField>
+
+#### Example Usage
+
+```php
+try {
+    // Database operation
+} catch (\Throwable $e) {
+    $parsed = DatabaseErrorParser::parse($e);
+    $text = DatabaseErrorParser::toPlainText($parsed);
+    
+    Log::error($text);
+    // [INSERT] Duplicate Entry: Cannot insert duplicate entry 'test@example.com' for key 'users_email_unique'
+    // Suggestion: Either use a different value or update the existing record instead of inserting a new one.
+}
+```
+
+---
+
+## Supported Error Types
+
+### SELECT Errors
+- **undefined_column** / **unknown_column** - Column does not exist
+- **undefined_table** / **unknown_table** - Table does not exist
+- **syntax_error** - SQL syntax errors
+- **duplicate_column** - Column specified multiple times
+
+### INSERT/UPDATE Errors
+- **unique_violation** / **duplicate_entry** - Unique constraint violation
+- **foreign_key_violation** - Foreign key constraint violation
+- **not_null_violation** - NULL value in NOT NULL column
+- **check_violation** - Check constraint violation
+- **invalid_text_representation** - Invalid data type format
+- **data_too_long** - String data exceeds column length
+- **numeric_value_out_of_range** - Number exceeds allowed range
+
+### DELETE Errors
+- **restrict_violation** - Cannot delete referenced record
+- **cannot_delete_parent** - Foreign key prevents deletion
+
+### MongoDB Errors
+- **duplicate_key** - Duplicate key in unique index
+- **validation_failed** - Document validation failed
+- **document_too_large** - Document exceeds 16MB limit
+- **immutable_field** - Cannot update immutable field
+- **unknown_operator** - Invalid MongoDB operator
+
+---
+
+## Error Type Mappings
+
+### PostgreSQL (SQLSTATE Codes)
+- `42703` - undefined_column
+- `42P01` - undefined_table
+- `42601` - syntax_error
+- `23505` - unique_violation
+- `23503` - foreign_key_violation
+- `23502` - not_null_violation
+- `23514` - check_violation
+- `22P02` - invalid_text_representation
+- `22001` - string_data_right_truncation
+- `22003` - numeric_value_out_of_range
+- `22012` - division_by_zero
+
+### MySQL (SQLSTATE Codes)
+- `42S22` - unknown_column
+- `42S02` - unknown_table
+- `42000` - syntax_error
+- `23000` - duplicate_entry / foreign_key_constraint / column_cannot_be_null
+- `22001` - data_too_long
+- `22007` - truncated_incorrect_value
+- `22003` - out_of_range
+- `22012` - division_by_zero
+
+### SQL Server (SQLSTATE Codes)
+- `42S22` - invalid_column
+- `42S02` - invalid_object
+- `42000` - syntax_error
+- `23000` - duplicate_key / foreign_key_conflict / null_constraint
+- `22001` - string_truncation
+- `22000` - conversion_failed
+- `22003` - arithmetic_overflow
+- `22012` - divide_by_zero
+
+---
+
+## Complete Example
+
+```php
+use Ronu\RestGenericClass\Core\Helpers\DatabaseErrorParser;
+use Illuminate\Support\Facades\Log;
+
+class UserController extends Controller
+{
+    public function store(Request $request)
+    {
+        try {
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+            ]);
+            
+            return response()->json($user, 201);
+            
+        } catch (\Throwable $e) {
+            // Parse the error
+            $parsed = DatabaseErrorParser::parse($e);
+            
+            // Log for debugging
+            Log::error(DatabaseErrorParser::toPlainText($parsed));
+            
+            // Return user-friendly error
+            return response()->json([
+                'error' => [
+                    'title' => $parsed['title'],
+                    'message' => $parsed['description'],
+                    'suggestion' => $parsed['suggestion'],
+                ],
+            ], 422);
+        }
+    }
+}
+```
+
+---
+
+## DatabaseErrorParserException
+
+The exception thrown by `toExceptionError()` includes a helper method:
+
+### getDatabaseErrorParsed()
+
+Retrieve the parsed error data from the exception.
+
+```php
+try {
+    // Database operation
+} catch (DatabaseErrorParserException $e) {
+    $errorData = $e->getDatabaseErrorParsed();
+    // Returns the decoded JSON array
+}
+```

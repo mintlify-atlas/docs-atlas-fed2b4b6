@@ -1,0 +1,546 @@
+---
+title: ID Existence Rules
+description: Validation rules for checking ID existence in database tables
+---
+
+## Overview
+
+The ID Existence validation rules provide flexible ways to validate that provided IDs exist in database tables with support for additional conditions like soft deletes, status checks, date ranges, and custom queries.
+
+All rules in this family:
+- Accept both single IDs and arrays of IDs
+- Use efficient batch queries with `whereIn`
+- Support custom database connections
+- Provide clear error messages with missing IDs
+
+## IdsExistInTable
+
+Validates that IDs exist in a specific table and column.
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name (e.g., `'mysql'`, `config('database.default')`)
+</ParamField>
+
+<ParamField path="table" type="string" required>
+  Table name to check (supports schema prefix: `'security.users'`)
+</ParamField>
+
+<ParamField path="column" type="string" default="id">
+  Column name to validate against
+</ParamField>
+
+<ParamField path="additionalConditions" type="array" default="[]">
+  Additional WHERE conditions as key-value pairs
+</ParamField>
+
+<ParamField path="inputKey" type="string|null" default="null">
+  Key to extract from array items (for nested data)
+</ParamField>
+
+### Basic Usage
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+
+public function rules(): array
+{
+    return [
+        'user_id' => [
+            'required',
+            'integer',
+            new IdsExistInTable(
+                connection: config('database.default'),
+                table: 'users',
+                column: 'id'
+            ),
+        ],
+    ];
+}
+```
+
+### Array of IDs
+
+```php
+'category_ids' => [
+    'required',
+    'array',
+    new IdsExistInTable(
+        connection: 'mysql',
+        table: 'categories',
+        column: 'id'
+    ),
+],
+```
+
+### With Additional Conditions
+
+```php
+'product_ids' => [
+    'required',
+    'array',
+    new IdsExistInTable(
+        connection: 'mysql',
+        table: 'products',
+        column: 'id',
+        additionalConditions: [
+            'is_active' => true,
+            'status' => 'published',
+        ]
+    ),
+],
+```
+
+### Nested Array Data
+
+```php
+// Input: [{"user_id": 1, "role": "admin"}, {"user_id": 2, "role": "user"}]
+'assignments' => [
+    'required',
+    'array',
+    new IdsExistInTable(
+        connection: 'mysql',
+        table: 'users',
+        column: 'id',
+        inputKey: 'user_id'  // Extract user_id from each item
+    ),
+],
+```
+
+### Error Message
+
+```json
+{
+  "message": "The given data was invalid.",
+  "errors": {
+    "category_ids": [
+      "The following IDs do not exist: 42, 99"
+    ]
+  }
+}
+```
+
+## IdsExistNotDelete
+
+Validates that IDs exist and are not soft-deleted (checks `deleted_at IS NULL`).
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="table" type="string" required>
+  Table name to check
+</ParamField>
+
+<ParamField path="column" type="string" default="id">
+  Column name to validate against
+</ParamField>
+
+<ParamField path="additionalConditions" type="array" default="[]">
+  Additional WHERE conditions
+</ParamField>
+
+<ParamField path="inputKey" type="string|null" default="null">
+  Key to extract from array items
+</ParamField>
+
+### Usage
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsExistNotDelete;
+
+'user_ids' => [
+    'required',
+    'array',
+    new IdsExistNotDelete(
+        connection: config('database.default'),
+        table: 'users',
+        column: 'id'
+    ),
+],
+```
+
+### With Additional Conditions
+
+```php
+'author_ids' => [
+    'required',
+    'array',
+    new IdsExistNotDelete(
+        connection: 'mysql',
+        table: 'users',
+        column: 'id',
+        additionalConditions: [
+            'role' => 'author',
+            'is_active' => true,
+        ]
+    ),
+],
+```
+
+## IdsExistWithAnyStatus
+
+Validates that IDs exist with one of the specified status values.
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="table" type="string" required>
+  Table name to check
+</ParamField>
+
+<ParamField path="statuses" type="array" required>
+  Array of acceptable status values
+</ParamField>
+
+<ParamField path="column" type="string" default="status">
+  Status column name
+</ParamField>
+
+<ParamField path="additionalConditions" type="array" default="[]">
+  Additional WHERE conditions
+</ParamField>
+
+### Usage
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsExistWithAnyStatus;
+
+'order_ids' => [
+    'required',
+    'array',
+    new IdsExistWithAnyStatus(
+        connection: 'mysql',
+        table: 'orders',
+        statuses: ['pending', 'processing'],
+        column: 'status'
+    ),
+],
+```
+
+### Custom Status Column
+
+```php
+'invoice_ids' => [
+    'required',
+    'array',
+    new IdsExistWithAnyStatus(
+        connection: 'mysql',
+        table: 'invoices',
+        statuses: ['draft', 'sent', 'pending'],
+        column: 'invoice_status'  // Custom column name
+    ),
+],
+```
+
+### With Additional Conditions
+
+```php
+'task_ids' => [
+    'required',
+    'array',
+    new IdsExistWithAnyStatus(
+        connection: 'mysql',
+        table: 'tasks',
+        statuses: ['todo', 'in_progress'],
+        column: 'status',
+        additionalConditions: [
+            'project_id' => $this->project_id,
+            'assigned_to' => auth()->id(),
+        ]
+    ),
+],
+```
+
+## IdsExistWithDateRange
+
+Validates that IDs exist with a date column within a specified range.
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="table" type="string" required>
+  Table name to check
+</ParamField>
+
+<ParamField path="dateColumn" type="string" required>
+  Date column name to check
+</ParamField>
+
+<ParamField path="startDate" type="string|null" default="null">
+  Start date (inclusive). Format: `Y-m-d` or `Y-m-d H:i:s`
+</ParamField>
+
+<ParamField path="endDate" type="string|null" default="null">
+  End date (inclusive). Format: `Y-m-d` or `Y-m-d H:i:s`
+</ParamField>
+
+<ParamField path="additionalConditions" type="array" default="[]">
+  Additional WHERE conditions
+</ParamField>
+
+### Usage
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsExistWithDateRange;
+
+'event_ids' => [
+    'required',
+    'array',
+    new IdsExistWithDateRange(
+        connection: 'mysql',
+        table: 'events',
+        dateColumn: 'start_date',
+        startDate: '2024-01-01',
+        endDate: '2024-12-31'
+    ),
+],
+```
+
+### Only Start Date
+
+```php
+'article_ids' => [
+    'required',
+    'array',
+    new IdsExistWithDateRange(
+        connection: 'mysql',
+        table: 'articles',
+        dateColumn: 'published_at',
+        startDate: now()->subDays(30)->toDateString(),
+        endDate: null  // No end date
+    ),
+],
+```
+
+### Only End Date
+
+```php
+'archived_ids' => [
+    'required',
+    'array',
+    new IdsExistWithDateRange(
+        connection: 'mysql',
+        table: 'documents',
+        dateColumn: 'archived_at',
+        startDate: null,  // No start date
+        endDate: now()->toDateString()
+    ),
+],
+```
+
+## IdsWithCustomQuery
+
+Validates IDs using a custom query callback for maximum flexibility.
+
+### Constructor Parameters
+
+<ParamField path="connection" type="string" required>
+  Database connection name
+</ParamField>
+
+<ParamField path="queryCallback" type="Closure" required>
+  Callback function that receives a query builder and should return the modified query
+</ParamField>
+
+<ParamField path="column" type="string" default="id">
+  Column name to validate against
+</ParamField>
+
+<ParamField path="additionalConditions" type="array" default="[]">
+  Additional WHERE conditions
+</ParamField>
+
+<ParamField path="inputKey" type="string|null" default="null">
+  Key to extract from array items
+</ParamField>
+
+### Basic Usage
+
+```php
+use Ronu\RestGenericClass\Core\Rules\IdsWithCustomQuery;
+use Illuminate\Support\Facades\DB;
+
+'product_ids' => [
+    'required',
+    'array',
+    new IdsWithCustomQuery(
+        connection: 'mysql',
+        queryCallback: function ($query) {
+            return $query->from('products')
+                ->where('is_active', true)
+                ->where('stock', '>', 0);
+        },
+        column: 'id'
+    ),
+],
+```
+
+### Complex Query with Joins
+
+```php
+'user_ids' => [
+    'required',
+    'array',
+    new IdsWithCustomQuery(
+        connection: 'mysql',
+        queryCallback: function ($query) {
+            return $query->from('users')
+                ->join('subscriptions', 'users.id', '=', 'subscriptions.user_id')
+                ->where('subscriptions.status', 'active')
+                ->where('subscriptions.expires_at', '>', now())
+                ->select('users.id');
+        },
+        column: 'id'
+    ),
+],
+```
+
+### With Organization Scope
+
+```php
+'project_ids' => [
+    'required',
+    'array',
+    new IdsWithCustomQuery(
+        connection: 'mysql',
+        queryCallback: function ($query) {
+            $orgId = auth()->user()->organization_id;
+            return $query->from('projects')
+                ->where('organization_id', $orgId)
+                ->where('status', '!=', 'archived');
+        },
+        column: 'id'
+    ),
+],
+```
+
+### Subquery Example
+
+```php
+'manager_ids' => [
+    'required',
+    'array',
+    new IdsWithCustomQuery(
+        connection: 'mysql',
+        queryCallback: function ($query) {
+            return $query->from('users')
+                ->whereIn('id', function ($subQuery) {
+                    $subQuery->select('manager_id')
+                        ->from('departments')
+                        ->where('is_active', true);
+                });
+        },
+        column: 'id'
+    ),
+],
+```
+
+## Complete Example
+
+```php
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Ronu\RestGenericClass\Core\Rules\IdsExistInTable;
+use Ronu\RestGenericClass\Core\Rules\IdsExistNotDelete;
+use Ronu\RestGenericClass\Core\Rules\IdsExistWithAnyStatus;
+use Ronu\RestGenericClass\Core\Rules\IdsWithCustomQuery;
+
+class AssignTasksRequest extends FormRequest
+{
+    protected string $connection;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->connection = config('database.default');
+    }
+
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            // Basic existence check
+            'project_id' => [
+                'required',
+                'integer',
+                new IdsExistInTable(
+                    connection: $this->connection,
+                    table: 'projects',
+                    column: 'id',
+                    additionalConditions: [
+                        'organization_id' => auth()->user()->organization_id,
+                    ]
+                ),
+            ],
+
+            // Check not deleted
+            'assignee_ids' => [
+                'required',
+                'array',
+                'min:1',
+                new IdsExistNotDelete(
+                    connection: $this->connection,
+                    table: 'users',
+                    column: 'id',
+                    additionalConditions: [
+                        'is_active' => true,
+                    ]
+                ),
+            ],
+
+            // Check with status
+            'task_ids' => [
+                'required',
+                'array',
+                new IdsExistWithAnyStatus(
+                    connection: $this->connection,
+                    table: 'tasks',
+                    statuses: ['todo', 'in_progress'],
+                    column: 'status',
+                    additionalConditions: [
+                        'project_id' => $this->project_id,
+                    ]
+                ),
+            ],
+
+            // Custom query for complex validation
+            'reviewer_ids' => [
+                'nullable',
+                'array',
+                new IdsWithCustomQuery(
+                    connection: $this->connection,
+                    queryCallback: function ($query) {
+                        return $query->from('users')
+                            ->join('role_user', 'users.id', '=', 'role_user.user_id')
+                            ->join('roles', 'role_user.role_id', '=', 'roles.id')
+                            ->whereIn('roles.name', ['reviewer', 'admin'])
+                            ->where('users.is_active', true)
+                            ->select('users.id');
+                    },
+                    column: 'id'
+                ),
+            ],
+        ];
+    }
+}
+```
+
+## See Also
+
+- [Uniqueness Rules](/api/validation/unique-rules) - Pivot table and composite uniqueness
+- [Validation Overview](/api/validation/overview) - All validation rules

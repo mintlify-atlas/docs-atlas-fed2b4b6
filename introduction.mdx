@@ -1,0 +1,214 @@
+---
+title: Introduction
+description: Overview of the Rest Generic Class Laravel package - a powerful solution for building RESTful APIs with dynamic filtering, relation loading, and hierarchical data support
+---
+
+# Introduction
+
+**Rest Generic Class** is a Laravel package that provides base classes for building RESTful APIs with minimal boilerplate. It eliminates repetitive CRUD code while offering powerful query capabilities that scale from simple applications to complex enterprise systems.
+
+## What is Rest Generic Class?
+
+Rest Generic Class is a foundation layer for Laravel applications that need robust REST APIs. Instead of writing controllers and services from scratch for every model, you extend three base classes and get a fully-functional REST endpoint with:
+
+- **Dynamic filtering** with a structured query syntax
+- **Smart relation loading** with field selection
+- **Hierarchical data** support for tree structures
+- **Advanced caching** with configurable backends (Redis, database, file, memcached)
+- **Role-based field restrictions** for sensitive data
+- **Bulk operations** (update multiple, delete multiple)
+- **Export capabilities** (Excel, PDF)
+
+<Note>
+The package focuses on **convention over configuration**. A three-class setup (Model, Service, Controller) gives you full CRUD operations with filtering, pagination, and relation loading out of the box.
+</Note>
+
+## Key Benefits
+
+<CardGroup cols={2}>
+  <Card title="Reduce Boilerplate" icon="code">
+    Write 90% less code for standard CRUD operations. Focus on business logic instead of repetitive REST implementations.
+  </Card>
+  
+  <Card title="Production-Ready" icon="shield-check">
+    Built-in security features including relation allowlists, query depth limits, and role-based field access control.
+  </Card>
+  
+  <Card title="High Performance" icon="gauge-high">
+    Generic cache strategy supporting Redis, database, or any Laravel cache driver. Automatic cache invalidation on writes.
+  </Card>
+  
+  <Card title="Developer-Friendly" icon="heart">
+    Clean API design with powerful query syntax. Supports filtering, nested relations, hierarchies, and complex queries.
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+The package follows a clean three-layer architecture:
+
+### BaseModel (extends Eloquent Model)
+
+Your models extend `BaseModel` instead of the standard Eloquent `Model`. This provides:
+
+- **Relation allowlists** via `const RELATIONS` - explicitly declare which relations can be queried
+- **Hierarchy support** via `const HIERARCHY_FIELD_ID` - enable tree structures (categories, org charts, etc.)
+- **Role-based field restrictions** - control which user roles can write sensitive fields
+- **Scenario-based validation** - different rules for create vs update operations
+- **Parent model support** - for single-table inheritance patterns
+
+```php /home/daytona/workspace/source/src/Core/Models/BaseModel.php:1-56
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $fillable = ['name', 'price', 'stock', 'category_id'];
+
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews'];  // Allowlisted relations
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+}
+```
+
+### BaseService (Business Logic Layer)
+
+Services extend `BaseService` and orchestrate all business logic:
+
+- **Dynamic filtering** - parse and apply complex filter trees with nested relations
+- **Relation loading** - eager load with field selection (e.g., `category:id,name`)
+- **Pagination** - both offset-based and cursor-based pagination
+- **Hierarchy queries** - list tree structures with configurable depth
+- **Cache management** - automatic caching with version-based invalidation
+- **Bulk operations** - create/update multiple records in a transaction
+
+```php /home/daytona/workspace/source/src/Core/Services/BaseService.php:1-60
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+    
+    // All CRUD methods inherited:
+    // - list_all($params)
+    // - get_one($params)
+    // - create($data)
+    // - update($data, $id)
+    // - destroy($id)
+    // - update_multiple($data)
+}
+```
+
+### RestController (HTTP Layer)
+
+Controllers extend `RestController` and handle HTTP concerns:
+
+- **Standard REST endpoints** - index, show, store, update, destroy
+- **Query parameter parsing** - extract and normalize request parameters
+- **Transaction management** - automatic DB transactions for write operations
+- **Error handling** - parse database errors into user-friendly messages
+- **Export endpoints** - Excel and PDF generation
+
+```php /home/daytona/workspace/source/src/Core/Controllers/RestController.php:1-95
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    protected $modelClass = Product::class;
+
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+    
+    // All REST methods inherited:
+    // - index(Request)      -> GET /products
+    // - show(Request, $id)  -> GET /products/{id}
+    // - store(Request)      -> POST /products
+    // - update(Request, $id)-> PUT /products/{id}
+    // - destroy($id)        -> DELETE /products/{id}
+    // - updateMultiple(Request) -> POST /products/update-multiple
+}
+```
+
+## Who Should Use This Package?
+
+### Perfect For:
+
+- **API-first applications** that need flexible query capabilities without GraphQL complexity
+- **Admin dashboards** with dynamic tables, filters, and relation loading
+- **Multi-tenant SaaS** applications with role-based access control requirements
+- **Data-heavy applications** that need hierarchical structures (categories, org charts, menus)
+- **Teams** wanting to standardize REST API patterns across services
+
+### Consider Alternatives If:
+
+- You need **GraphQL** - this package focuses on REST conventions
+- You have **non-standard REST patterns** - the package works best with conventional CRUD
+- You prefer **repositories** over services - the package uses a service layer pattern
+- You need **JSONAPI spec compliance** - this uses a custom (but consistent) query format
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="E-commerce Product Catalog">
+    Build a product API with category hierarchies, dynamic price filtering, stock management, and review relations. Cache product listings with Redis for high traffic.
+  </Accordion>
+  
+  <Accordion title="Multi-tenant CRM">
+    Role-based field restrictions ensure sales reps can't modify sensitive fields. Dynamic filtering lets users build custom views. Hierarchical accounts for organizational structures.
+  </Accordion>
+  
+  <Accordion title="Content Management System">
+    Nested page hierarchies with unlimited depth. Dynamic filtering for search. Relation loading for authors, categories, and tags. Export content to Excel for backups.
+  </Accordion>
+  
+  <Accordion title="Admin Dashboard Backend">
+    Generic filtering powers flexible data tables. Sort, filter, and paginate any resource. Export reports to PDF. Bulk update operations for batch changes.
+  </Accordion>
+</AccordionGroup>
+
+## Package Philosophy
+
+Rest Generic Class follows these design principles:
+
+1. **Security First** - Relations must be explicitly allowlisted. Query depth is limited. Operators are configurable.
+2. **Convention Over Configuration** - Sensible defaults for 80% of use cases. Override when needed.
+3. **Performance Matters** - Generic caching, query optimization, and efficient eager loading.
+4. **Laravel Native** - Uses Laravel's query builder, cache, validation, and conventions throughout.
+5. **Type Safety** - PHP 8.0+ with proper type hints and strict types where appropriate.
+
+<Note>
+**Next Step**: Understanding the [Core Concepts](/concepts) will help you make the most of the package's capabilities.
+</Note>
+
+## What You'll Learn
+
+This documentation is organized into sections:
+
+- **Get Started** (you are here) - Introduction, concepts, and quickstart
+- **Configuration** - Environment variables, cache setup, and publishing config
+- **Usage** - Basic and advanced usage patterns with real examples
+- **Reference** - Complete API reference, middleware, exceptions, and validation rules
+- **Quality** - Security, testing, troubleshooting, and FAQ
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Learn about the Service-Controller-Model pattern, filtering system, and security model
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first REST API in 5 minutes with a complete working example
+  </Card>
+</CardGroup>

@@ -1,0 +1,594 @@
+---
+title: 'BaseModel'
+description: 'Core model class providing validation, hierarchy, relations, and role-based field restrictions'
+icon: 'database'
+---
+
+## Overview
+
+`BaseModel` extends Laravel's Eloquent Model with advanced features including:
+
+- **Validation**: Built-in validation with scenario support (create/update)
+- **Hierarchy**: Self-referencing tree structures with ancestor/descendant traversal
+- **Role-based field restrictions**: Control field access per Spatie role
+- **Parent model support**: Single Table Inheritance (STI) pattern
+- **MongoDB relations**: Custom relation helpers for MongoDB connections
+
+<Info>
+  All models in your application should extend `BaseModel` to leverage these features.
+</Info>
+
+## Constants
+
+### MODEL
+
+```php
+const MODEL = '';
+```
+
+The name of the model used for array parameter wrapping.
+
+**Example:**
+```php
+class User extends BaseModel
+{
+    const MODEL = 'user';
+}
+// Expects input: ['user' => ['name' => 'John', 'email' => 'john@example.com']]
+```
+
+### columns
+
+```php
+const columns = [];
+```
+
+Default columns for the model. Used for field selection in queries.
+
+**Example:**
+```php
+const columns = ['id', 'name', 'email', 'created_at'];
+```
+
+### RELATIONS
+
+```php
+const RELATIONS = [];
+```
+
+Defines allowed relations that can be eager loaded via API requests.
+
+**Example:**
+```php
+const RELATIONS = ['posts', 'comments', 'roles'];
+```
+
+<Warning>
+  Only relations listed here can be loaded via the `relations` query parameter. This is a security feature.
+</Warning>
+
+### PARENT
+
+```php
+const PARENT = [];
+```
+
+Defines parent class information for Single Table Inheritance hierarchy.
+
+**Example:**
+```php
+class Admin extends User
+{
+    const PARENT = [
+        'class' => User::class
+    ];
+}
+```
+
+### HIERARCHY_FIELD_ID
+
+```php
+const HIERARCHY_FIELD_ID = null;
+```
+
+Field name for self-referencing hierarchy (e.g., `parent_id`, `manager_id`).
+
+**Example:**
+```php
+class Category extends BaseModel
+{
+    const HIERARCHY_FIELD_ID = 'parent_id';
+}
+```
+
+## Properties
+
+### fieldsByRole
+
+```php
+protected array $fieldsByRole = [];
+```
+
+Role-to-field restriction map. Declares which fields require specific Spatie roles to write.
+
+<ParamField path="fieldsByRole" type="array<string, list<string>>" default="[]">
+  Maps role names to arrays of privileged field names
+</ParamField>
+
+**Example:**
+```php
+protected array $fieldsByRole = [
+    'superadmin' => ['is_superuser', 'permissions'],
+    'admin'      => ['status', 'role_id', 'is_verified'],
+];
+```
+
+**Behavior:**
+- Fields NOT listed are writable by any authenticated user
+- Superusers bypass all restrictions
+- Multiple roles grant union of field access
+
+### scenario
+
+```php
+protected string $scenario = 'create';
+```
+
+Current operation scenario (`create` or `update`). Used for context-aware validation.
+
+### fieldKeyUpdate
+
+```php
+protected string|int|null $fieldKeyUpdate = null;
+```
+
+Reference column for update operations. Falls back to primary key when null.
+
+## Key Methods
+
+### getDeniedFieldsForUser()
+
+```php
+public function getDeniedFieldsForUser(mixed $user): array
+```
+
+Returns fields the given user is NOT allowed to write.
+
+<ParamField path="user" type="mixed" required>
+  The authenticated user model (must have Spatie's `hasRole()` method)
+</ParamField>
+
+<ResponseField name="return" type="list<string>">
+  Array of field names the user cannot write
+</ResponseField>
+
+**Algorithm:**
+1. If `$fieldsByRole` is empty → return `[]` (no restrictions)
+2. If user has `is_superuser = true` → return `[]`
+3. Build universe of all privileged fields
+4. Build allowed set from user's roles
+5. Return universe − allowed
+
+**Example:**
+```php
+$user = auth()->user();
+$deniedFields = $model->getDeniedFieldsForUser($user);
+// ['is_superuser', 'permissions'] if user lacks superadmin role
+```
+
+### Accessor Methods
+
+#### getPrimaryKey()
+
+```php
+public function getPrimaryKey(): string
+```
+
+Returns the model's primary key name.
+
+#### getFieldKeyUpdate()
+
+```php
+public function getFieldKeyUpdate(): string|int|null
+```
+
+Returns the field used for updates (defaults to primary key).
+
+#### getScenario()
+
+```php
+public function getScenario(): string
+```
+
+Returns current validation scenario (`create` or `update`).
+
+#### setScenario()
+
+```php
+public function setScenario(string $scenario): void
+```
+
+Sets the validation scenario.
+
+### Hierarchy Methods
+
+#### hasHierarchy()
+
+```php
+public function hasHierarchy(): bool
+```
+
+Checks if model uses Single Table Inheritance (has `PARENT` defined).
+
+#### hasHierarchyField()
+
+```php
+public function hasHierarchyField(): bool
+```
+
+Checks if model supports self-referencing hierarchy.
+
+#### getHierarchyFieldId()
+
+```php
+public function getHierarchyFieldId(): ?string
+```
+
+Returns the hierarchy field name (e.g., `parent_id`).
+
+#### hierarchyParent()
+
+```php
+public function hierarchyParent(): ?BelongsTo
+```
+
+Defines BelongsTo relation to parent in hierarchy.
+
+**Example:**
+```php
+$category = Category::find(1);
+$parent = $category->hierarchyParent; // Parent category
+```
+
+#### hierarchyChildren()
+
+```php
+public function hierarchyChildren(): HasMany
+```
+
+Defines HasMany relation to children in hierarchy.
+
+**Example:**
+```php
+$category = Category::find(1);
+$children = $category->hierarchyChildren; // Child categories
+```
+
+#### isHierarchyRoot()
+
+```php
+public function isHierarchyRoot(): bool
+```
+
+Checks if record is root node (has no parent).
+
+#### getHierarchyAncestors()
+
+```php
+public function getHierarchyAncestors(): \Illuminate\Support\Collection
+```
+
+Returns all ancestors from parent to root.
+
+**Example:**
+```php
+$category = Category::find(5);
+$ancestors = $category->getHierarchyAncestors();
+// Collection of parent, grandparent, great-grandparent, etc.
+```
+
+#### getHierarchyDescendants()
+
+```php
+public function getHierarchyDescendants(?int $maxDepth = null, int $currentDepth = 0): \Illuminate\Support\Collection
+```
+
+Returns all descendants recursively.
+
+<ParamField path="maxDepth" type="int|null" default="null">
+  Maximum depth to traverse (null = unlimited)
+</ParamField>
+
+<ParamField path="currentDepth" type="int" default="0">
+  Current depth in recursion (internal use)
+</ParamField>
+
+**Example:**
+```php
+$category = Category::find(1);
+$descendants = $category->getHierarchyDescendants(2); // 2 levels deep
+```
+
+### Validation Methods
+
+#### rules()
+
+```php
+protected function rules(string $scenario): array
+```
+
+Define validation rules per scenario. Override in your model.
+
+**Example:**
+```php
+protected function rules(string $scenario): array
+{
+    if ($scenario === 'create') {
+        return [
+            'email' => 'required|email|unique:users',
+            'name' => 'required|min:3',
+        ];
+    }
+    return [
+        'email' => 'email',
+        'name' => 'min:3',
+    ];
+}
+```
+
+#### self_validate()
+
+```php
+public function self_validate(string $scenario = 'create', bool $specific = false, bool $validate_pk = true): array
+```
+
+Validates current model attributes.
+
+<ParamField path="scenario" type="string" default="create">
+  Validation scenario (`create` or `update`)
+</ParamField>
+
+<ParamField path="specific" type="bool" default="false">
+  If true, only validate fields present in attributes
+</ParamField>
+
+<ParamField path="validate_pk" type="bool" default="true">
+  Include primary key in validation
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  [
+    'success' => bool,
+    'errors' => array,
+    'model' => string // Model class name
+  ]
+  ```
+</ResponseField>
+
+#### validate_all()
+
+```php
+public function validate_all(array $attributes, string $scenario = 'create', bool $specific = false): array
+```
+
+Validates model and all parent models in hierarchy.
+
+<ParamField path="attributes" type="array" required>
+  Data to validate
+</ParamField>
+
+<ParamField path="scenario" type="string" default="create">
+  Validation scenario
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  ['success' => true] // or ['success' => false, 'errors' => [...]]
+  ```
+</ResponseField>
+
+#### save_model()
+
+```php
+public function save_model(array $attributes = [], string $scenario = 'create'): array
+```
+
+Validates and saves the model (and parent hierarchy if applicable).
+
+<ParamField path="attributes" type="array" default="[]">
+  Attributes to save (uses current attributes if empty)
+</ParamField>
+
+<ParamField path="scenario" type="string" default="create">
+  Operation scenario
+</ParamField>
+
+<ResponseField name="return" type="array">
+  ```php
+  [
+    'success' => true,
+    'model' => array // Saved attributes
+  ]
+  // or on error:
+  [
+    'success' => false,
+    'errors' => array
+  ]
+  ```
+</ResponseField>
+
+### Static Methods
+
+#### create_model()
+
+```php
+static public function create_model(array $params): array
+```
+
+Creates one or more model instances.
+
+**Example:**
+```php
+// Single record
+$result = User::create_model(['name' => 'John', 'email' => 'john@example.com']);
+
+// Multiple records
+$result = User::create_model(['user' => [
+    ['name' => 'John', 'email' => 'john@example.com'],
+    ['name' => 'Jane', 'email' => 'jane@example.com']
+]]);
+```
+
+#### update_multiple()
+
+```php
+static public function update_multiple(array $params): array
+```
+
+Updates multiple records at once.
+
+**Example:**
+```php
+$result = User::update_multiple([
+    ['id' => 1, 'status' => 'active'],
+    ['id' => 2, 'status' => 'inactive']
+]);
+```
+
+#### destroy_model()
+
+```php
+static public function destroy_model(mixed $id): array
+```
+
+Deletes a model by ID.
+
+<ResponseField name="return" type="array">
+  ```php
+  ['success' => true, 'model' => Model]
+  ```
+</ResponseField>
+
+### MongoDB Relation Methods
+
+<Info>
+  These methods enable relationships between SQL and MongoDB databases.
+</Info>
+
+#### belongsToMongo()
+
+```php
+public function belongsToMongo(
+    string $related,
+    ?string $foreignKey = null,
+    ?string $ownerKey = null,
+    ?string $relation = null
+): MongoBelongTo
+```
+
+Defines a BelongsTo relationship with a MongoDB model.
+
+**Example:**
+```php
+public function author()
+{
+    return $this->belongsToMongo(MongoUser::class, 'author_id');
+}
+```
+
+#### hasManyMongo()
+
+```php
+public function hasManyMongo(
+    string $related,
+    ?string $foreignKey = null,
+    ?string $localKey = null
+): MongoHasMany|HasMany
+```
+
+Defines a HasMany relationship with a MongoDB model.
+
+**Example:**
+```php
+public function logs()
+{
+    return $this->hasManyMongo(MongoLog::class, 'user_id');
+}
+```
+
+#### hasOneMongo()
+
+```php
+public function hasOneMongo(
+    string $related,
+    ?string $foreignKey = null,
+    ?string $localKey = null
+): HasOneOrMany
+```
+
+Defines a HasOne relationship with a MongoDB model.
+
+## Usage Example
+
+```php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Category extends BaseModel
+{
+    const MODEL = 'category';
+    const RELATIONS = ['parent', 'children', 'products'];
+    const HIERARCHY_FIELD_ID = 'parent_id';
+    
+    protected $fillable = ['name', 'slug', 'parent_id', 'is_active'];
+    
+    protected array $fieldsByRole = [
+        'admin' => ['is_active', 'featured']
+    ];
+    
+    protected function rules(string $scenario): array
+    {
+        if ($scenario === 'create') {
+            return [
+                'name' => 'required|min:3|unique:categories',
+                'slug' => 'required|unique:categories',
+            ];
+        }
+        return [
+            'name' => 'min:3',
+        ];
+    }
+    
+    public function products()
+    {
+        return $this->hasMany(Product::class);
+    }
+}
+
+// Usage
+$category = Category::find(1);
+$children = $category->hierarchyChildren;
+$ancestors = $category->getHierarchyAncestors();
+$descendants = $category->getHierarchyDescendants(2);
+
+// Validation
+$result = $category->validate_all([
+    'name' => 'Electronics',
+    'slug' => 'electronics'
+], 'create');
+
+if ($result['success']) {
+    // Save the category
+}
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="BaseService" icon="gear" href="/api/base-service">
+    Service layer with query building and CRUD operations
+  </Card>
+  <Card title="RestController" icon="server" href="/api/rest-controller">
+    Controller exposing RESTful API endpoints
+  </Card>
+</CardGroup>

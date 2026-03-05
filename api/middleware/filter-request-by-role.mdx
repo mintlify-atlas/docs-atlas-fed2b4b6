@@ -1,0 +1,207 @@
+---
+title: FilterRequestByRole
+description: Middleware for role-based field filtering in mutation requests
+---
+
+## Overview
+
+The `FilterRequestByRole` middleware provides role-based field restriction for incoming requests. It acts as the first line of defense in the role-based field restriction pipeline, stripping or rejecting request fields that the authenticated user is not allowed to modify based on the `$fieldsByRole` configuration declared on the target Eloquent model.
+
+<Note>
+This middleware must run **after** authentication middleware (`ctx.auth`) so that `auth()->user()` is available, and **before** `data.transform` so the FormRequest never sees denied fields.
+</Note>
+
+## Position in Pipeline
+
+```
+ctx.resolve → ctx.auth → maybe.permission → role.filter → data.transform
+                                                 ↑
+                                           This middleware
+```
+
+## Constructor Parameters
+
+This middleware is applied via route middleware and accepts parameters:
+
+<ParamField path="modelClass" type="string" required>
+  Fully-qualified Eloquent model class name (e.g., `App\Models\User`)
+</ParamField>
+
+<ParamField path="mode" type="string" default="silent">
+  Filtering mode:
+  - `silent` - Denied fields are silently removed (recommended for mobile/web)
+  - `strict` - Returns 403 error if denied fields are present (recommended for B2B/API partners)
+</ParamField>
+
+## Operating Modes
+
+### Silent Mode (Default)
+
+Denied fields are silently removed from the request. The client receives no indication that the field was ignored.
+
+```php
+// Route definition
+Route::put('/users/{user}', [UserController::class, 'update'])
+    ->middleware('role.filter:App\Models\User');
+```
+
+**Behavior**: If a non-admin user sends `{"name": "John", "role": "admin"}`, the `role` field is silently stripped before reaching the controller.
+
+### Strict Mode
+
+If the client sends any denied field, returns a 403 error with field names.
+
+```php
+// Route definition
+Route::put('/users/{user}', [UserController::class, 'update'])
+    ->middleware('role.filter:App\Models\User,strict');
+```
+
+**Behavior**: Same request returns:
+```json
+{
+  "message": "You are not allowed to modify: role"
+}
+```
+
+## Model Integration
+
+Your Eloquent model must implement the `getDeniedFieldsForUser()` method:
+
+```php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class User extends Model
+{
+    /**
+     * Define fields that should be denied for specific roles.
+     */
+    protected array $fieldsByRole = [
+        'role' => ['admin'],
+        'is_verified' => ['admin', 'moderator'],
+        'credits' => ['admin'],
+    ];
+
+    /**
+     * Get fields that the given user is NOT allowed to modify.
+     *
+     * @param \Illuminate\Contracts\Auth\Authenticatable $user
+     * @return array
+     */
+    public function getDeniedFieldsForUser($user): array
+    {
+        $deniedFields = [];
+
+        foreach ($this->fieldsByRole as $field => $allowedRoles) {
+            if (!$user->hasAnyRole($allowedRoles)) {
+                $deniedFields[] = $field;
+            }
+        }
+
+        return $deniedFields;
+    }
+}
+```
+
+## Model Class Injection
+
+This middleware automatically injects the resolved model class name as a request attribute:
+
+```php
+$request->attributes->set('_model_class', $modelClass);
+```
+
+This allows `BaseRequest::mergeProhibitedRules()` to auto-resolve the model without requiring child FormRequests to declare `$modelClass`, as long as `role.filter` is present in the route.
+
+## No-Op Conditions
+
+The middleware passes through without filtering when:
+
+- HTTP verb is not `POST`, `PUT`, or `PATCH`
+- No authenticated user (anonymous request)
+- Model class does not exist
+- Model does not implement `getDeniedFieldsForUser()`
+- `getDeniedFieldsForUser()` returns empty array (no restrictions / superuser)
+
+## Usage Examples
+
+### Basic Usage
+
+```php
+use App\Http\Controllers\UserController;
+use Illuminate\Support\Facades\Route;
+
+// Silent mode (default)
+Route::put('/users/{user}', [UserController::class, 'update'])
+    ->middleware('role.filter:App\Models\User');
+
+// Strict mode
+Route::post('/articles', [ArticleController::class, 'store'])
+    ->middleware('role.filter:App\Models\Article,strict');
+```
+
+### With Controller Middleware
+
+```php
+namespace App\Http\Controllers;
+
+class UserController extends Controller
+{
+    public function __construct()
+    {
+        $this->middleware('role.filter:App\Models\User')
+            ->only(['store', 'update']);
+    }
+
+    public function update(Request $request, User $user)
+    {
+        // Role-restricted fields are already filtered
+        $user->update($request->all());
+
+        return response()->json($user);
+    }
+}
+```
+
+### Combined with Other Middleware
+
+```php
+Route::middleware(['auth:api', 'role.filter:App\Models\User'])
+    ->group(function () {
+        Route::put('/profile', [ProfileController::class, 'update']);
+        Route::put('/settings', [SettingsController::class, 'update']);
+    });
+```
+
+## Error Handling
+
+### Non-Production Environments
+
+If the model class doesn't exist, a `RuntimeException` is thrown to surface misconfiguration:
+
+```php
+RuntimeException: FilterRequestByRole: [App\Models\InvalidModel] does not exist.
+Check the middleware parameter in your route definition.
+```
+
+### Production Environment
+
+In production, the middleware fails open (lets the request through) to avoid blocking legitimate traffic due to configuration errors.
+
+## Security Considerations
+
+<Warning>
+  Always combine this middleware with proper authentication middleware (`auth:api`, `auth:web`, etc.). Anonymous requests pass through without filtering.
+</Warning>
+
+<Tip>
+  Use **strict mode** for API integrations where clients should be aware of field restrictions. Use **silent mode** for user-facing applications where a better UX is preferred.
+</Tip>
+
+## See Also
+
+- [TransformData Middleware](/api/middleware/transform-data) - Data validation middleware
+- [SpatieAuthorize Middleware](/api/middleware/spatie-authorize) - Permission-based authorization
+- [InjectRequestParams Middleware](/api/middleware/inject-request-params) - Request parameter injection

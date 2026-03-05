@@ -1,0 +1,201 @@
+---
+title: "Installation Setup"
+description: "Step-by-step guide to install Rest Generic Class Laravel package"
+---
+
+## Installation via Composer
+
+The Rest Generic Class package is installed through Composer, PHP's dependency manager.
+
+<Steps>
+
+<Step title="Install the package">
+
+Run the following command in your Laravel project root:
+
+```bash
+composer require ronu/rest-generic-class
+```
+
+Composer will:
+- Download the latest stable version (current: 2.1.8)
+- Install all required dependencies
+- Register the package with your Laravel application
+
+<Note>
+  Installation typically takes 30-60 seconds depending on your network speed and system performance.
+</Note>
+
+</Step>
+
+<Step title="Verify auto-discovery">
+
+Laravel's package auto-discovery will automatically register the service provider. Verify the package is installed:
+
+```bash
+composer show ronu/rest-generic-class
+```
+
+You should see output confirming the package version and details:
+
+```
+name     : ronu/rest-generic-class
+descrip. : Base Class for generic restfull api in laravel
+versions : * 2.1.8
+```
+
+<Note>
+  The service provider `Ronu\RestGenericClass\Core\Providers\RestGenericClassServiceProvider` is registered automatically via the `extra.laravel.providers` section in composer.json.
+</Note>
+
+</Step>
+
+<Step title="Publish configuration (optional)">
+
+Publishing the configuration file is **optional** but recommended if you want to customize package behavior:
+
+```bash
+php artisan vendor:publish --tag=rest-generic-class-config
+```
+
+This creates `config/rest-generic-class.php` in your application with default settings.
+
+<Warning>
+  If you don't publish the config file, the package will use its default configuration. This is perfectly fine for getting started.
+</Warning>
+
+</Step>
+
+<Step title="Verify installation">
+
+Confirm the package is working by checking if the base classes are available:
+
+```bash
+php artisan tinker
+```
+
+Then in the Tinker shell:
+
+```php
+>>> class_exists('Ronu\\RestGenericClass\\Core\\Models\\BaseModel');
+=> true
+
+>>> class_exists('Ronu\\RestGenericClass\\Core\\Services\\BaseService');
+=> true
+
+>>> class_exists('Ronu\\RestGenericClass\\Core\\Controllers\\RestController');
+=> true
+```
+
+If all return `true`, the installation is successful!
+
+</Step>
+
+</Steps>
+
+## Service Provider Registration
+
+### Automatic Registration
+
+The package uses Laravel's auto-discovery feature. The service provider is registered automatically through the `extra.laravel` section in `composer.json`:
+
+```json
+"extra": {
+    "laravel": {
+        "providers": [
+            "Ronu\\RestGenericClass\\Core\\Providers\\RestGenericClassServiceProvider"
+        ]
+    }
+}
+```
+
+<Note>
+  You don't need to manually add the service provider to `config/app.php`. Laravel 5.5+ handles this automatically.
+</Note>
+
+### Manual Registration (Edge Cases)
+
+If auto-discovery is disabled in your project, manually register the provider in `config/app.php`:
+
+```php config/app.php
+'providers' => [
+    // Other service providers...
+    
+    Ronu\RestGenericClass\Core\Providers\RestGenericClassServiceProvider::class,
+],
+```
+
+<Warning>
+  Manual registration is rarely needed. Only use this approach if you've explicitly disabled package auto-discovery.
+</Warning>
+
+## What Gets Installed
+
+When you install the package, you get access to:
+
+### Core Classes
+
+- **BaseModel**: Extended Eloquent model with filtering, relations, and hierarchy support
+- **BaseService**: Service layer with CRUD operations, caching, and business logic
+- **RestController**: Controller base class with RESTful endpoints
+
+### Additional Features
+
+- Dynamic filtering with complex operators
+- Relation eager loading and nested selection
+- Hierarchical data listing with parent-child relationships
+- Request validation and column validation
+- Built-in caching with multiple store support
+- Export capabilities (with optional dependencies)
+- Permission management integration (with Spatie)
+
+### Configuration
+
+- Logging configuration for debugging and monitoring
+- Filtering rules and validation settings
+- Cache strategy and TTL settings
+- Query performance options
+
+## Troubleshooting Installation
+
+### Composer Memory Issues
+
+If Composer runs out of memory during installation:
+
+```bash
+php -d memory_limit=-1 /usr/local/bin/composer require ronu/rest-generic-class
+```
+
+### Version Conflicts
+
+If you encounter dependency conflicts:
+
+```bash
+# Update existing packages first
+composer update
+
+# Then try installing again
+composer require ronu/rest-generic-class
+```
+
+<Note>
+  Check that your Laravel version is 12.0 or higher. Run `php artisan --version` to verify.
+</Note>
+
+### Auto-discovery Not Working
+
+Verify auto-discovery is enabled in `composer.json`:
+
+```json
+"extra": {
+    "laravel": {
+        "dont-discover": []
+    }
+}
+```
+
+If the package is in the `dont-discover` array, remove it or register the provider manually.
+
+## Next Steps
+
+Now that the package is installed, proceed to [initial configuration](/installation/configuration) to customize the package for your needs.

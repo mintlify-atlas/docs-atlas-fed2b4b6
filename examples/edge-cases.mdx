@@ -1,0 +1,631 @@
+---
+title: Edge Cases & Troubleshooting
+description: Handling extreme scenarios, config issues, and production edge cases
+---
+
+This page covers edge cases, extreme scenarios, and troubleshooting strategies for production environments.
+
+## Configuration Issues
+
+### Edge Case 1: Config Caching Hides Environment Changes
+
+**Symptom:** Environment variable changes (like `LOG_QUERY` or `REST_STRICT_COLUMNS`) don't take effect.
+
+**Cause:** Laravel caches configuration files for performance. With cached config, `.env` updates are ignored until the cache is rebuilt.
+
+<Steps>
+
+<Step title="Reproduce the Issue">
+  1. Set `LOG_QUERY=true` in `.env`
+  2. Run `php artisan config:cache`
+  3. Change `LOG_QUERY=false` in `.env`
+  4. Observe that queries are still being logged
+</Step>
+
+<Step title="Verify Current Config">
+  ```php
+  // Check what the app actually sees
+  dd(config('rest-generic-class.logging.query'));
+  ```
+</Step>
+
+<Step title="Clear and Rebuild Cache">
+  ```bash
+  # Clear config cache
+  php artisan config:clear
+  
+  # Rebuild cache (production)
+  php artisan config:cache
+  ```
+</Step>
+
+</Steps>
+
+<Warning>
+  **Production Deployment Checklist:**
+  
+  Always run these commands after updating `.env`:
+  ```bash
+  php artisan config:cache
+  php artisan route:cache
+  php artisan view:cache
+  ```
+</Warning>
+
+**Testing the Fix:**
+
+```php
+// In a controller or tinker
+use Illuminate\Support\Facades\Config;
+
+// Before cache clear
+Config::get('rest-generic-class.logging.query'); // true (old value)
+
+// After config:clear
+Config::get('rest-generic-class.logging.query'); // false (new value)
+```
+
+### Edge Case 2: Queue Workers Use Stale Config
+
+**Symptom:** Long-running queue workers behave as if old configuration is still active, even after clearing cache.
+
+**Cause:** Queue workers boot the application once and keep config in memory until restarted.
+
+<CodeGroup>
+
+```bash Restart Workers
+# Graceful restart (waits for current jobs)
+php artisan queue:restart
+
+# Force stop and restart (systemd)
+sudo systemctl restart laravel-worker
+
+# Supervisor
+sudo supervisorctl restart laravel-worker:*
+```
+
+```php Check Worker Memory
+// Add to job to debug
+public function handle()
+{
+    Log::info('Worker config', [
+        'strict_columns' => config('rest-generic-class.filtering.strict_columns'),
+        'cache_enabled' => config('rest-generic-class.cache.enabled'),
+        'worker_started' => $this->getWorkerStartTime(),
+    ]);
+}
+```
+
+</CodeGroup>
+
+**Best Practice - Supervisor Configuration:**
+
+```ini /etc/supervisor/conf.d/laravel-worker.conf
+[program:laravel-worker]
+command=php /var/www/artisan queue:work --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+stopwaitsecs=3600
+```
+
+<Note>
+  Set `--max-time=3600` to automatically restart workers every hour, ensuring they pick up config changes.
+</Note>
+
+## Safety Limits and Timeouts
+
+### Edge Case 3: Deep Hierarchy Trees Cause Timeouts
+
+**Symptom:** Hierarchy listing requests timeout when working with large, deeply nested category trees.
+
+**Cause:** Without `max_depth`, the package recursively loads the entire tree, which can be thousands of records.
+
+<CodeGroup>
+
+```json Problem Request (No Limit)
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "children"
+  }
+}
+```
+
+```json Solution (With Depth Limit)
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "children",
+    "max_depth": 3
+  },
+  "pagination": {
+    "page": 1,
+    "pageSize": 50
+  }
+}
+```
+
+</CodeGroup>
+
+**Advanced Solution - Paginate Root Nodes:**
+
+```json
+{
+  "hierarchy": {
+    "filter_mode": "with_descendants",
+    "children_key": "children",
+    "max_depth": 4
+  },
+  "oper": {
+    "and": ["parent_id|is|null"]
+  },
+  "pagination": {
+    "page": 1,
+    "pageSize": 20
+  }
+}
+```
+
+**Performance Monitoring:**
+
+```php
+// In your service
+use Illuminate\Support\Facades\DB;
+
+public function list_all($params = [])
+{
+    DB::enableQueryLog();
+    
+    $start = microtime(true);
+    $result = parent::list_all($params);
+    $duration = microtime(true) - $start;
+    
+    Log::channel('performance')->warning('Slow hierarchy query', [
+        'duration' => $duration,
+        'queries' => count(DB::getQueryLog()),
+        'max_depth' => $params['hierarchy']['max_depth'] ?? 'unlimited',
+    ]);
+    
+    return $result;
+}
+```
+
+### Edge Case 4: Excessive Filter Conditions Trigger Limits
+
+**Symptom:** Requests fail with `Maximum conditions (100) exceeded` error.
+
+**Cause:** The filter engine enforces `filtering.max_conditions` to prevent database overload from complex filter trees.
+
+<CodeGroup>
+
+```json Problem (101 Conditions)
+{
+  "oper": {
+    "or": [
+      "id|=|1",
+      "id|=|2",
+      // ... 99 more conditions
+      "id|=|101"
+    ]
+  }
+}
+```
+
+```json Solution (Use IN Operator)
+{
+  "oper": {
+    "and": [
+      "id|in|1,2,3,4,5,6,...,101"
+    ]
+  }
+}
+```
+
+</CodeGroup>
+
+**Increase Limit (If Necessary):**
+
+```php config/rest-generic-class.php
+return [
+    'filtering' => [
+        'max_conditions' => 200, // Increased from 100
+        'max_depth' => 5,
+    ],
+];
+```
+
+<Warning>
+  Increasing `max_conditions` can impact database performance. Add indexes and monitor query execution time.
+</Warning>
+
+**Alternative - Split Into Multiple Requests:**
+
+```php
+// Client-side batching
+$idBatches = array_chunk($productIds, 100);
+
+foreach ($idBatches as $batch) {
+    $response = Http::post('/api/v1/products', [
+        'oper' => [
+            'and' => [
+                'id|in|' . implode(',', $batch)
+            ]
+        ]
+    ]);
+    
+    $allProducts = array_merge($allProducts, $response->json()['data']);
+}
+```
+
+## Concurrency Issues
+
+### Edge Case 5: Bulk Update Concurrency Collisions
+
+**Symptom:** Two administrators update the same record simultaneously, and one set of changes is lost.
+
+**Cause:** `update_multiple()` applies updates row-by-row without record-level locking (last-write-wins).
+
+**Reproduce the Issue:**
+
+<Steps>
+
+<Step title="Admin 1 Updates Product">
+  ```http
+  POST /api/v1/products/update-multiple
+  
+  {
+    "product": [
+      {"id": 10, "price": 99.99, "stock": 100}
+    ]
+  }
+  ```
+</Step>
+
+<Step title="Admin 2 Updates Same Product (Simultaneous)">
+  ```http
+  POST /api/v1/products/update-multiple
+  
+  {
+    "product": [
+      {"id": 10, "stock": 50}
+    ]
+  }
+  ```
+</Step>
+
+<Step title="Result">
+  Final state depends on which request completes last. Admin 1's `price` update might be lost.
+</Step>
+
+</Steps>
+
+**Solution 1 - Optimistic Locking:**
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function update($id, $payload)
+    {
+        $product = $this->modelClass->findOrFail($id);
+        
+        // Check updated_at to detect concurrent modifications
+        if (isset($payload['updated_at'])) {
+            $clientTimestamp = $payload['updated_at'];
+            if ($product->updated_at->toIso8601String() !== $clientTimestamp) {
+                throw new \Exception(
+                    'Record was modified by another user. Please refresh and try again.'
+                );
+            }
+            unset($payload['updated_at']);
+        }
+        
+        return parent::update($id, $payload);
+    }
+}
+```
+
+**Solution 2 - Database-Level Locking:**
+
+```php
+use Illuminate\Support\Facades\DB;
+
+public function update_multiple($items)
+{
+    return DB::transaction(function () use ($items) {
+        foreach ($items as $item) {
+            // Lock the row for update
+            $record = $this->modelClass
+                ->where('id', $item['id'])
+                ->lockForUpdate()
+                ->first();
+            
+            if ($record) {
+                $record->update($item);
+            }
+        }
+    });
+}
+```
+
+### Edge Case 6: Cache Invalidation Race Conditions
+
+**Symptom:** Cached data briefly shows stale information after an update.
+
+**Cause:** Cache version bump happens after the database write, creating a small window where stale cache is valid.
+
+**Mitigation:**
+
+```php
+// The package handles this internally, but you can add extra safety:
+public function update($id, $payload)
+{
+    // Bump cache version BEFORE write
+    $this->bumpCacheVersion();
+    
+    try {
+        $result = parent::update($id, $payload);
+    } catch (\Exception $e) {
+        // Rollback cache version if update fails
+        $this->revertCacheVersion();
+        throw $e;
+    }
+    
+    return $result;
+}
+```
+
+## Multi-Tenant Issues
+
+### Edge Case 7: Cross-Tenant Permission Leaks
+
+**Symptom:** Users from one tenant can access permissions from another tenant.
+
+**Cause:** Spatie's `PermissionRegistrar` uses a team ID to scope permissions. If not set, it falls back to a global cache key.
+
+**Test the Issue:**
+
+```php
+use Spatie\Permission\PermissionRegistrar;
+
+// Tenant A user
+auth()->setUser($tenantAUser);
+app(PermissionRegistrar::class)->setPermissionsTeamId(1);
+$tenantAUser->can('products.view'); // true
+
+// Tenant B user (forgot to set team)
+auth()->setUser($tenantBUser);
+// ⚠️ Team ID not set - uses global cache
+$tenantBUser->can('products.view'); // true (WRONG - should be false)
+```
+
+**Solution - Set Team ID in Middleware:**
+
+```php
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Spatie\Permission\PermissionRegistrar;
+
+class SetPermissionTeam
+{
+    public function handle($request, Closure $next)
+    {
+        $user = $request->user();
+        
+        if ($user && $user->tenant_id) {
+            app(PermissionRegistrar::class)
+                ->setPermissionsTeamId($user->tenant_id);
+        }
+        
+        return $next($request);
+    }
+}
+```
+
+**Register Before Authorization:**
+
+```php
+protected $middlewareGroups = [
+    'api' => [
+        // ...
+        \App\Http\Middleware\SetPermissionTeam::class, // ← Before auth checks
+        \Ronu\RestGenericClass\Core\Middleware\SpatieAuthorize::class,
+    ],
+];
+```
+
+## Validation Edge Cases
+
+### Edge Case 8: Invalid Relation Names
+
+**Symptom:** Requests return 400 error: `Relation 'internalLogs' is not allowed`.
+
+**Cause:** The relation exists on the model but isn't added to the `RELATIONS` allowlist.
+
+<CodeGroup>
+
+```php Model (Missing Relation)
+class Product extends BaseModel
+{
+    const RELATIONS = ['category', 'reviews'];
+    // 'tags' relation exists but not allowlisted
+    
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
+    }
+}
+```
+
+```php Fix
+class Product extends BaseModel
+{
+    const RELATIONS = ['category', 'reviews', 'tags'];
+    
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
+    }
+}
+```
+
+</CodeGroup>
+
+**Test Validation:**
+
+```php
+use Tests\TestCase;
+
+class ProductTest extends TestCase
+{
+    public function test_rejects_invalid_relation()
+    {
+        $response = $this->postJson('/api/v1/products', [
+            'relations' => ['internalLogs'],
+            'oper' => ['and' => ['status|=|active']]
+        ]);
+        
+        $response->assertStatus(400)
+            ->assertJson([
+                'success' => false,
+                'message' => "Relation 'internalLogs' is not allowed"
+            ]);
+    }
+}
+```
+
+### Edge Case 9: Invalid Filter Operators
+
+**Symptom:** 400 error: `Operator '~=' is not allowed`.
+
+**Cause:** The operator isn't in the package's allowlist.
+
+**Allowed Operators:**
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'allowed_operators' => [
+        '=', '!=', '>', '>=', '<', '<=',
+        'like', 'not like', 'ilike', 'not ilike',
+        'in', 'not in',
+        'is', 'is not',
+        'between', 'not between',
+    ],
+],
+```
+
+**Add Custom Operator (Advanced):**
+
+```php config/rest-generic-class.php
+'filtering' => [
+    'allowed_operators' => [
+        // ... default operators
+        'regexp',      // MySQL regex
+        'not regexp',  // MySQL not regex
+    ],
+],
+```
+
+## Production Monitoring
+
+### Edge Case 10: Rate Limiting Heavy Filters
+
+**Symptom:** Complex queries cause slow responses and affect other users.
+
+**Solution - Add Rate Limiting:**
+
+```php routes/api.php
+Route::prefix('v1')->middleware('throttle:60,1')->group(function () {
+    Route::apiResource('products', ProductController::class);
+});
+```
+
+**Monitor Slow Queries:**
+
+```php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+DB::listen(function ($query) {
+    if ($query->time > 1000) { // > 1 second
+        Log::channel('slow-queries')->warning('Slow query detected', [
+            'sql' => $query->sql,
+            'bindings' => $query->bindings,
+            'time' => $query->time,
+        ]);
+    }
+});
+```
+
+## Quick Reference - Common Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Relation 'X' is not allowed` | Relation not in `RELATIONS` | Add to model's `RELATIONS` constant |
+| `Operator 'X' is not allowed` | Invalid operator | Use allowed operator or add to config |
+| `Maximum conditions exceeded` | Too many filter conditions | Use `in` operator or increase limit |
+| `Call to undefined method` | Missing optional package | Install spatie/permission or maatwebsite/excel |
+| Config changes ignored | Config cached | Run `php artisan config:clear` |
+| Workers using old config | Workers not restarted | Run `php artisan queue:restart` |
+| Hierarchy timeout | No `max_depth` set | Add `max_depth` and pagination |
+| Cross-tenant data leak | Team ID not set | Set team ID in middleware |
+
+## Testing Edge Cases
+
+<CodeGroup>
+
+```php Test Config Cache Issue
+public function test_config_cache_affects_behavior()
+{
+    // Set config
+    config(['rest-generic-class.filtering.strict_columns' => true]);
+    
+    // Cache config
+    Artisan::call('config:cache');
+    
+    // Change config (should be ignored)
+    config(['rest-generic-class.filtering.strict_columns' => false]);
+    
+    // Assert cached value is used
+    $this->assertTrue(
+        config('rest-generic-class.filtering.strict_columns')
+    );
+}
+```
+
+```php Test Concurrent Updates
+use Illuminate\Support\Facades\DB;
+
+public function test_concurrent_bulk_updates()
+{
+    DB::transaction(function () {
+        // Simulate concurrent updates
+        $service1 = app(ProductService::class);
+        $service2 = app(ProductService::class);
+        
+        $service1->update(10, ['price' => 99]);
+        $service2->update(10, ['stock' => 50]);
+    });
+    
+    $product = Product::find(10);
+    $this->assertEquals(99, $product->price);
+    $this->assertEquals(50, $product->stock);
+}
+```
+
+</CodeGroup>
+
+## Next Steps
+
+- Review [Configuration Reference](/configuration/overview) for all safety limits
+- Explore [Complete CRUD Example](/examples/simple-crud) for basic setup
+- Check [Cache Scenarios](/examples/cache-scenarios) for performance optimization

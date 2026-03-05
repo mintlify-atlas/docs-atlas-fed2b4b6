@@ -1,0 +1,406 @@
+---
+title: Security Guide
+description: Security features and best practices for Rest Generic Class
+---
+
+Rest Generic Class includes multiple security layers to protect your application from common vulnerabilities and abusive queries.
+
+## Overview
+
+The package implements defense-in-depth security through:
+
+- Relation whitelisting
+- Column validation
+- Operator restrictions
+- Query complexity limits
+- SQL injection prevention
+- Permission-based access control
+
+## Relation Allowlist
+
+The service enforces allowlisted relations via the `RELATIONS` constant on your models.
+
+### How It Works
+
+```php
+class Product extends BaseModel
+{
+    const RELATIONS = ['category', 'reviews', 'supplier'];
+    
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+    
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+    
+    public function supplier()
+    {
+        return $this->belongsTo(Supplier::class);
+    }
+}
+```
+
+When `filtering.strict_relations` is enabled (default), any relation not in the allowlist will trigger an error:
+
+```json
+{
+  "error": "Relation 'internalNotes' is not allowed"
+}
+```
+
+### Configuration
+
+```php
+// config/rest-generic-class.php
+'filtering' => [
+    'strict_relations' => true,  // Recommended: keep enabled
+],
+```
+
+<Warning>
+  **Never disable strict relations in production.** Disabling this validation can expose sensitive data through unintended relations. Always explicitly whitelist relations in `const RELATIONS`.
+</Warning>
+
+### Best Practice
+
+Only include relations that should be accessible via the API:
+
+```php
+// Good: Only public relations
+const RELATIONS = ['category', 'reviews'];
+
+// Bad: Exposing sensitive data
+const RELATIONS = ['category', 'reviews', 'internalNotes', 'adminFlags'];
+```
+
+## Column Validation
+
+The package validates column names before applying filters to prevent SQL errors and potential injection attempts.
+
+### Configuration
+
+```php
+'filtering' => [
+    'validate_columns' => true,              // Enable validation
+    'strict_column_validation' => true,      // Enforce strict mode
+    'column_cache_ttl' => 3600,             // Cache for 1 hour
+],
+```
+
+### How It Works
+
+1. Column names are validated against the actual database schema
+2. Valid columns are cached to avoid repeated schema queries
+3. Invalid column attempts are rejected before query execution
+
+```http
+GET /api/v1/products?select=["id","name","malicious_column"]
+```
+
+```json
+{
+  "error": "Invalid column: malicious_column"
+}
+```
+
+<Warning>
+  Column validation helps prevent SQL injection and database errors. Keep both `validate_columns` and `strict_column_validation` enabled in production.
+</Warning>
+
+## Operator Allowlist
+
+Only operators defined in `filtering.allowed_operators` are accepted in `oper` filters.
+
+### Default Allowed Operators
+
+```php
+'filtering' => [
+    'allowed_operators' => [
+        '=', '!=', '<', '>', '<=', '>=',
+        'like', 'not like', 'ilike', 'not ilike',
+        'in', 'not in',
+        'between', 'not between',
+        'is null', 'is not null',
+    ],
+],
+```
+
+### Operator Validation
+
+Unsupported or potentially dangerous operators throw an exception:
+
+```json
+{
+  "oper": {
+    "and": ["name|REGEXP|malicious.*pattern"]
+  }
+}
+```
+
+```json
+{
+  "error": "Operator 'REGEXP' is not allowed"
+}
+```
+
+<Note>
+  The allowlist prevents injection of dangerous SQL operators. Only add operators to the allowlist if you have a specific, validated use case.
+</Note>
+
+## Filter Complexity Limits
+
+The package limits `oper` depth and total conditions to protect against abusive queries.
+
+### Default Limits
+
+```php
+'filtering' => [
+    'max_depth' => 5,           // Maximum nesting depth
+    'max_conditions' => 100,    // Maximum total conditions
+],
+```
+
+### Why This Matters
+
+Deeply nested or excessively complex filters can:
+- Cause database timeouts
+- Consume excessive memory
+- Enable denial-of-service attacks
+
+### Protection in Action
+
+```json
+{
+  "oper": {
+    "and": [
+      {"or": [/* 150 conditions */]}
+    ]
+  }
+}
+```
+
+```json
+{
+  "error": "Maximum conditions (100) exceeded"
+}
+```
+
+<Warning>
+  These limits are security boundaries. Only increase them if you have legitimate use cases and have tested the performance impact.
+</Warning>
+
+## SQL Injection Prevention
+
+The package uses Laravel's query builder with parameter binding throughout:
+
+### Safe Query Building
+
+```php
+// All filters use parameter binding
+$query->where('status', '=', $value);  // Parameterized
+```
+
+The package **never** concatenates user input directly into SQL strings.
+
+### Defense Layers
+
+1. **Column validation** - Ensures column names are valid
+2. **Operator allowlist** - Only permits safe operators
+3. **Parameter binding** - All values are bound, never concatenated
+4. **Input validation** - Values are validated before query building
+
+<Note>
+  While the package provides strong SQL injection protection, always validate and sanitize input in your application layer as well. Defense in depth is essential.
+</Note>
+
+## Permission-Based Access Control
+
+When using Spatie's `laravel-permission` package, ensure proper authorization flow.
+
+### Middleware Order
+
+<Warning>
+  **Critical:** Authorization middleware must run **after** tenant/guard resolution.
+</Warning>
+
+```php
+// Correct order
+Route::middleware(['auth:api', 'tenant.resolve', 'permission:products.view'])
+    ->group(function () {
+        Route::apiResource('products', ProductController::class);
+    });
+
+// Wrong - permission check before tenant resolution
+Route::middleware(['permission:products.view', 'auth:api', 'tenant.resolve'])
+    ->group(function () {
+        // This can leak data across tenants!
+    });
+```
+
+### Permission Cache
+
+The package uses Spatie's permission cache to avoid repeated database queries:
+
+```php
+// Clear permission cache after changes
+php artisan cache:forget spatie.permission.cache
+
+// Or use Spatie's command
+php artisan permission:cache-reset
+```
+
+### Multi-Tenant Isolation
+
+Ensure guard and team ID are set correctly:
+
+```php
+// In your tenant resolution middleware
+public function handle($request, Closure $next)
+{
+    $tenant = $this->resolveTenant($request);
+    
+    // Set team context before permission checks
+    setPermissionsTeamId($tenant->id);
+    
+    return $next($request);
+}
+```
+
+## Environment Configuration
+
+Environment variables are only referenced in the config file, making the package compatible with Laravel's config caching.
+
+### Config Cache Safety
+
+```bash
+# Safe in production
+php artisan config:cache
+```
+
+The package **never** calls `env()` directly in application code, only in configuration files. This follows Laravel best practices and prevents security issues with cached configs.
+
+## Security Best Practices
+
+### 1. Always Whitelist Relations
+
+```php
+// Define explicit relations
+const RELATIONS = ['category', 'reviews'];
+```
+
+### 2. Keep Validation Enabled
+
+```php
+'filtering' => [
+    'strict_relations' => true,
+    'validate_columns' => true,
+    'strict_column_validation' => true,
+],
+```
+
+### 3. Use Appropriate Limits
+
+```php
+'filtering' => [
+    'max_depth' => 5,
+    'max_conditions' => 100,
+],
+```
+
+### 4. Enable Query Logging (Development Only)
+
+```env
+# Development
+LOG_QUERY=true
+
+# Production
+LOG_QUERY=false
+```
+
+### 5. Implement Authorization
+
+```php
+// Use Laravel policies or Spatie permissions
+Route::middleware(['auth:api', 'can:view,product'])
+    ->get('/products/{product}', [ProductController::class, 'show']);
+```
+
+### 6. Sanitize Export Data
+
+When using export features:
+
+```php
+// In your controller
+public function export(Request $request)
+{
+    // Validate and authorize before export
+    $this->authorize('export', Product::class);
+    
+    // Apply additional filters for sensitive data
+    $request->merge([
+        'select' => ['id', 'name', 'price'], // Exclude sensitive fields
+    ]);
+    
+    return $this->service->exportExcel($request);
+}
+```
+
+### 7. Rate Limiting
+
+Apply rate limiting to API endpoints:
+
+```php
+Route::middleware(['throttle:60,1'])
+    ->group(function () {
+        Route::apiResource('products', ProductController::class);
+    });
+```
+
+### 8. HTTPS Only
+
+Enforce HTTPS in production:
+
+```php
+// In AppServiceProvider
+if (app()->environment('production')) {
+    URL::forceScheme('https');
+}
+```
+
+## Reporting Security Issues
+
+If you discover a security vulnerability:
+
+1. **Do not** open a public GitHub issue
+2. Report privately to the maintainer email listed in package metadata
+3. Include:
+   - Description of the vulnerability
+   - Steps to reproduce
+   - Potential impact
+   - Suggested fix (if available)
+
+## Security Checklist
+
+Before deploying to production:
+
+- [ ] `strict_relations` is enabled
+- [ ] `validate_columns` is enabled
+- [ ] `strict_column_validation` is enabled
+- [ ] Appropriate `max_depth` and `max_conditions` limits are set
+- [ ] Authorization middleware is correctly ordered
+- [ ] Query logging is disabled (`LOG_QUERY=false`)
+- [ ] HTTPS is enforced
+- [ ] Rate limiting is configured
+- [ ] Permission cache is properly managed
+- [ ] Export endpoints are authorized
+- [ ] Sensitive fields are excluded from API responses
+
+## Learn More
+
+- [Troubleshooting](/help/troubleshooting) - Common security-related errors
+- [Configuration Overview](/configuration/overview) - All security settings
+- [API Reference](/api/base-model) - Security-related methods

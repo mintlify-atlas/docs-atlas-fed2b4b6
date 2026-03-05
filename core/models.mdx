@@ -1,0 +1,334 @@
+---
+title: BaseModel Class
+description: Learn how to extend BaseModel to create models with built-in REST features, role-based field access control, and hierarchical data support
+---
+
+## Overview
+
+The `BaseModel` class is the foundation of your Laravel models when using Rest Generic Class. It extends Laravel's Eloquent `Model` and adds:
+
+- **Automatic REST integration** with services and controllers
+- **Role-based field restrictions** via `fieldsByRole`
+- **Hierarchical data support** with self-referencing relationships
+- **Relation declaration** for security and filtering
+- **Built-in validation** with scenario-based rules
+
+## Extending BaseModel
+
+All your models should extend `BaseModel` instead of Laravel's default `Model`:
+
+```php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $fillable = ['name', 'price', 'stock', 'category_id', 'status'];
+    
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews'];
+    
+    // Define your Eloquent relations
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+    
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+}
+```
+
+## Required Constants
+
+### MODEL
+
+Defines the model name used in API requests:
+
+```php
+const MODEL = 'product';
+```
+
+This allows batch operations like:
+
+```json
+{
+  "product": [
+    {"name": "Item 1", "price": 100},
+    {"name": "Item 2", "price": 200}
+  ]
+}
+```
+
+### RELATIONS
+
+Declares which relations are allowed for eager loading and filtering. **This is critical for security** — only relations listed here can be loaded via the `relations` parameter.
+
+```php
+const RELATIONS = ['category', 'reviews', 'tags'];
+```
+
+<Warning>
+If `const RELATIONS` is not defined and `strict_relations` is enabled (default), requests with `relations` parameter will throw a 500 error. Always declare your relations explicitly.
+</Warning>
+
+Now clients can request:
+
+```http
+GET /api/products?relations=["category","reviews"]
+```
+
+### HIERARCHY_FIELD_ID (Optional)
+
+Enables hierarchical queries for self-referencing models:
+
+```php
+const HIERARCHY_FIELD_ID = 'parent_id';
+```
+
+This activates:
+- Hierarchical listing with the `hierarchy` parameter
+- Helper methods: `hierarchyParent()`, `hierarchyChildren()`
+- Tree-building capabilities
+
+Example for categories with parent-child structure:
+
+```php
+class Category extends BaseModel
+{
+    protected $fillable = ['name', 'parent_id'];
+    
+    const MODEL = 'category';
+    const RELATIONS = [];
+    const HIERARCHY_FIELD_ID = 'parent_id';
+}
+```
+
+See [Hierarchical Data](/core/hierarchy) for full details.
+
+## Role-Based Field Access Control
+
+The `fieldsByRole` property enables fine-grained field-level access control using Spatie roles.
+
+### Basic Usage
+
+```php
+class User extends BaseModel
+{
+    protected $fillable = [
+        'name', 'email', 'password',
+        'is_superuser', 'permissions', 'status', 'role_id'
+    ];
+    
+    protected array $fieldsByRole = [
+        'superadmin' => ['is_superuser', 'permissions'],
+        'admin'      => ['status', 'role_id'],
+    ];
+}
+```
+
+### How It Works
+
+**Fields NOT listed in `fieldsByRole` are writable by any authenticated user** (base fields).
+
+**Fields listed under a role** are "privileged" and require that specific role:
+
+- `is_superuser`, `permissions` → Only `superadmin` role can write
+- `status`, `role_id` → Only `admin` role can write
+- `name`, `email`, `password` → Any authenticated user can write (not restricted)
+
+<ParamField path="fieldsByRole" type="array<string, list<string>>">
+  Maps Spatie role names to field names. Users without the required role will have those fields stripped from incoming requests and marked as prohibited in validation.
+</ParamField>
+
+### Resolution Logic
+
+The `getDeniedFieldsForUser()` method returns fields the user **cannot** write:
+
+1. If `fieldsByRole` is empty → `[]` (no restrictions)
+2. If `user->is_superuser === true` → `[]` (unrestricted)
+3. Otherwise:
+   - Universe = all fields mentioned in `fieldsByRole`
+   - Allowed = fields the user CAN write (from their roles)
+   - Denied = Universe − Allowed
+
+From **BaseModel.php:111-138**:
+
+```php
+public function getDeniedFieldsForUser(mixed $user): array
+{
+    // Fast path: no restrictions declared
+    if (empty($this->fieldsByRole)) {
+        return [];
+    }
+    
+    // Fast path: superuser bypasses all restrictions
+    if ($user->is_superuser ?? false) {
+        return [];
+    }
+    
+    // Build universe of all privileged fields
+    $allPrivileged = array_unique(
+        array_merge(...array_values($this->fieldsByRole))
+    );
+    
+    // Collect fields user CAN write via their roles
+    $allowed = [];
+    foreach ($this->fieldsByRole as $role => $fields) {
+        if (method_exists($user, 'hasRole') && $user->hasRole($role)) {
+            $allowed = array_merge($allowed, $fields);
+        }
+    }
+    
+    // Return denied = universe - allowed
+    return array_values(array_diff($allPrivileged, $allowed));
+}
+```
+
+<Note>
+This method is consumed by:
+- **FilterRequestByRole** middleware → strips denied fields from request payload
+- **BaseRequest::mergeProhibitedRules()** → adds `prohibited` validation rules
+</Note>
+
+## Scenario-Based Validation
+
+Models support scenario-based validation rules:
+
+```php
+protected function rules(string $scenario): array
+{
+    $base = [
+        'name' => 'required|string|max:255',
+        'email' => 'required|email',
+    ];
+    
+    if ($scenario === 'create') {
+        $base['password'] = 'required|min:8';
+    }
+    
+    if ($scenario === 'update') {
+        $base['password'] = 'sometimes|min:8';
+    }
+    
+    return $base;
+}
+```
+
+Scenarios are automatically set by the service layer:
+- `create` for new records
+- `update` for existing records
+
+## Hierarchy Helper Methods
+
+When `HIERARCHY_FIELD_ID` is defined, BaseModel provides:
+
+<ParamField path="hasHierarchyField()" type="bool">
+  Returns `true` if the model has `HIERARCHY_FIELD_ID` defined.
+</ParamField>
+
+<ParamField path="hierarchyParent()" type="BelongsTo|null">
+  Returns a `belongsTo` relation to the parent record.
+</ParamField>
+
+<ParamField path="hierarchyChildren()" type="HasMany">
+  Returns a `hasMany` relation to child records.
+</ParamField>
+
+<ParamField path="isHierarchyRoot()" type="bool">
+  Returns `true` if the record has no parent (root node).
+</ParamField>
+
+<ParamField path="getHierarchyAncestors()" type="Collection">
+  Returns all ancestors from parent to root.
+</ParamField>
+
+<ParamField path="getHierarchyDescendants(?int $maxDepth)" type="Collection">
+  Returns all descendants. Optional `$maxDepth` limits recursion depth.
+</ParamField>
+
+## MongoDB Relations
+
+BaseModel includes MongoDB relationship helpers for cross-database relations:
+
+```php
+public function belongsToMongo(
+    string $related,
+    ?string $foreignKey = null,
+    ?string $ownerKey = null,
+    ?string $relation = null
+): MongoBelongTo
+
+public function hasManyMongo(
+    string $related,
+    ?string $foreignKey = null,
+    ?string $localKey = null
+): MongoHasMany
+
+public function hasOneMongo(
+    string $related,
+    ?string $foreignKey = null,
+    ?string $localKey = null
+): HasOneOrMany
+```
+
+## Complete Example
+
+```php
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Product extends BaseModel
+{
+    use SoftDeletes;
+    
+    protected $fillable = [
+        'name', 'description', 'price', 'stock',
+        'category_id', 'status', 'featured', 'internal_notes'
+    ];
+    
+    const MODEL = 'product';
+    const RELATIONS = ['category', 'reviews', 'tags'];
+    const columns = ['id', 'name', 'price', 'stock', 'status'];
+    
+    // Privilege system: only admins can modify these fields
+    protected array $fieldsByRole = [
+        'admin' => ['featured', 'internal_notes'],
+    ];
+    
+    // Scenario-based validation
+    protected function rules(string $scenario): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'stock' => 'required|integer|min:0',
+            'category_id' => 'required|exists:categories,id',
+            'status' => 'in:draft,active,archived',
+        ];
+    }
+    
+    // Eloquent relations (must match RELATIONS constant)
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+    
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+    
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
+    }
+}
+```
+
+## Next Steps
+
+- [Services](/core/services) — Learn how BaseService uses your model
+- [Controllers](/core/controllers) — Set up REST endpoints
+- [Hierarchical Data](/core/hierarchy) — Work with tree structures

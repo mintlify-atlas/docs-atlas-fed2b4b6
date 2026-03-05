@@ -1,0 +1,520 @@
+---
+title: Complete CRUD Example
+description: Full working CRUD implementation with Model, Service, Controller, and Routes
+---
+
+This page provides a complete, copy-paste-ready CRUD example using the Rest Generic Class package. You'll build a fully functional Product API with all CRUD operations.
+
+## Overview
+
+We'll create:
+- **Model** - Product model with relations
+- **Service** - Product service layer
+- **Controller** - RESTful API controller
+- **Routes** - API endpoint definitions
+- **HTTP Examples** - Complete request/response examples
+
+## Step 1: Create the Model
+
+Create `app/Models/Product.php`:
+
+```php
+<?php
+
+namespace App\Models;
+
+use Ronu\RestGenericClass\Core\Models\BaseModel;
+
+class Product extends BaseModel
+{
+    protected $fillable = [
+        'name',
+        'description',
+        'price',
+        'stock',
+        'category_id',
+        'status'
+    ];
+
+    protected $casts = [
+        'price' => 'decimal:2',
+        'stock' => 'integer',
+        'category_id' => 'integer',
+    ];
+
+    // Required: model identifier for bulk operations
+    const MODEL = 'product';
+
+    // Required: allowlisted relations for security
+    const RELATIONS = ['category', 'reviews', 'tags'];
+
+    /**
+     * Product belongs to a category
+     */
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    /**
+     * Product has many reviews
+     */
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    /**
+     * Product has many tags (many-to-many)
+     */
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class, 'product_tags');
+    }
+}
+```
+
+## Step 2: Create the Service
+
+Create `app/Services/ProductService.php`:
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\Product;
+use Ronu\RestGenericClass\Core\Services\BaseService;
+
+class ProductService extends BaseService
+{
+    public function __construct()
+    {
+        parent::__construct(Product::class);
+    }
+
+    /**
+     * Optional: Add custom business logic
+     * Example: Validate stock before creating
+     */
+    public function create($payload)
+    {
+        // Custom validation
+        if (isset($payload['stock']) && $payload['stock'] < 0) {
+            throw new \InvalidArgumentException('Stock cannot be negative');
+        }
+
+        // Set default status if not provided
+        $payload['status'] = $payload['status'] ?? 'active';
+
+        return parent::create($payload);
+    }
+}
+```
+
+## Step 3: Create the Controller
+
+Create `app/Http/Controllers/Api/ProductController.php`:
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Models\Product;
+use App\Services\ProductService;
+use Ronu\RestGenericClass\Core\Controllers\RestController;
+
+class ProductController extends RestController
+{
+    protected $modelClass = Product::class;
+
+    public function __construct(ProductService $service)
+    {
+        $this->service = $service;
+    }
+}
+```
+
+## Step 4: Define Routes
+
+Add to `routes/api.php`:
+
+```php
+use App\Http\Controllers\Api\ProductController;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('v1')->group(function () {
+    // Standard REST endpoints
+    Route::apiResource('products', ProductController::class);
+    
+    // Bulk update endpoint
+    Route::post('products/update-multiple', [ProductController::class, 'updateMultiple']);
+});
+```
+
+## Step 5: Database Migration
+
+Create the products table:
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up()
+    {
+        Schema::create('products', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->text('description')->nullable();
+            $table->decimal('price', 10, 2);
+            $table->integer('stock')->default(0);
+            $table->foreignId('category_id')->constrained()->onDelete('cascade');
+            $table->enum('status', ['active', 'inactive', 'discontinued'])->default('active');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+    }
+
+    public function down()
+    {
+        Schema::dropIfExists('products');
+    }
+};
+```
+
+## HTTP Request Examples
+
+### Create a Product
+
+<CodeGroup>
+
+```http POST /api/v1/products
+POST /api/v1/products
+Content-Type: application/json
+
+{
+  "name": "Wireless Keyboard",
+  "description": "Mechanical keyboard with RGB lighting",
+  "price": 89.99,
+  "stock": 100,
+  "category_id": 3,
+  "status": "active"
+}
+```
+
+```json Response 201
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "name": "Wireless Keyboard",
+    "description": "Mechanical keyboard with RGB lighting",
+    "price": "89.99",
+    "stock": 100,
+    "category_id": 3,
+    "status": "active",
+    "created_at": "2024-03-15T10:00:00.000000Z",
+    "updated_at": "2024-03-15T10:00:00.000000Z"
+  },
+  "message": "Product created successfully"
+}
+```
+
+</CodeGroup>
+
+### List Products with Filtering
+
+<CodeGroup>
+
+```http GET /api/v1/products
+GET /api/v1/products?select=["id","name","price"]&relations=["category:id,name"]
+Content-Type: application/json
+
+{
+  "oper": {
+    "and": [
+      "status|=|active",
+      "price|>=|50",
+      "stock|>|0"
+    ]
+  },
+  "orderby": [{"price": "desc"}],
+  "pagination": {
+    "page": 1,
+    "pageSize": 10
+  }
+}
+```
+
+```json Response 200
+{
+  "success": true,
+  "data": {
+    "current_page": 1,
+    "data": [
+      {
+        "id": 1,
+        "name": "Wireless Keyboard",
+        "price": "89.99",
+        "category": {
+          "id": 3,
+          "name": "Electronics"
+        }
+      },
+      {
+        "id": 2,
+        "name": "Gaming Mouse",
+        "price": "59.99",
+        "category": {
+          "id": 3,
+          "name": "Electronics"
+        }
+      }
+    ],
+    "first_page_url": "http://api.example.com/v1/products?page=1",
+    "from": 1,
+    "last_page": 5,
+    "last_page_url": "http://api.example.com/v1/products?page=5",
+    "per_page": 10,
+    "to": 10,
+    "total": 47
+  }
+}
+```
+
+</CodeGroup>
+
+### Get Single Product
+
+<CodeGroup>
+
+```http GET /api/v1/products/1
+GET /api/v1/products/1?relations=["category","reviews:id,rating,comment"]
+Content-Type: application/json
+```
+
+```json Response 200
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "name": "Wireless Keyboard",
+    "description": "Mechanical keyboard with RGB lighting",
+    "price": "89.99",
+    "stock": 100,
+    "category_id": 3,
+    "status": "active",
+    "created_at": "2024-03-15T10:00:00.000000Z",
+    "updated_at": "2024-03-15T10:00:00.000000Z",
+    "category": {
+      "id": 3,
+      "name": "Electronics",
+      "slug": "electronics"
+    },
+    "reviews": [
+      {
+        "id": 1,
+        "rating": 5,
+        "comment": "Great keyboard!"
+      },
+      {
+        "id": 2,
+        "rating": 4,
+        "comment": "Good value for money"
+      }
+    ]
+  }
+}
+```
+
+</CodeGroup>
+
+### Update a Product
+
+<CodeGroup>
+
+```http PUT /api/v1/products/1
+PUT /api/v1/products/1
+Content-Type: application/json
+
+{
+  "price": 79.99,
+  "stock": 85
+}
+```
+
+```json Response 200
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "name": "Wireless Keyboard",
+    "description": "Mechanical keyboard with RGB lighting",
+    "price": "79.99",
+    "stock": 85,
+    "category_id": 3,
+    "status": "active",
+    "created_at": "2024-03-15T10:00:00.000000Z",
+    "updated_at": "2024-03-15T11:30:00.000000Z"
+  },
+  "message": "Product updated successfully"
+}
+```
+
+</CodeGroup>
+
+### Delete a Product
+
+<CodeGroup>
+
+```http DELETE /api/v1/products/1
+DELETE /api/v1/products/1
+```
+
+```json Response 200
+{
+  "success": true,
+  "message": "Product deleted successfully"
+}
+```
+
+</CodeGroup>
+
+### Bulk Update Products
+
+<CodeGroup>
+
+```http POST /api/v1/products/update-multiple
+POST /api/v1/products/update-multiple
+Content-Type: application/json
+
+{
+  "product": [
+    {"id": 10, "stock": 50, "status": "active"},
+    {"id": 11, "stock": 0, "status": "inactive"},
+    {"id": 12, "price": 99.99}
+  ]
+}
+```
+
+```json Response 200
+{
+  "success": true,
+  "data": [
+    {
+      "id": 10,
+      "name": "Product A",
+      "stock": 50,
+      "status": "active",
+      "updated_at": "2024-03-15T12:00:00.000000Z"
+    },
+    {
+      "id": 11,
+      "name": "Product B",
+      "stock": 0,
+      "status": "inactive",
+      "updated_at": "2024-03-15T12:00:00.000000Z"
+    },
+    {
+      "id": 12,
+      "name": "Product C",
+      "price": "99.99",
+      "updated_at": "2024-03-15T12:00:00.000000Z"
+    }
+  ],
+  "message": "3 products updated successfully"
+}
+```
+
+</CodeGroup>
+
+## Advanced Filtering Examples
+
+### Search with Multiple Conditions
+
+```json
+{
+  "oper": {
+    "and": [
+      "name|like|%keyboard%",
+      "status|=|active",
+      {
+        "or": [
+          "price|<=|100",
+          "stock|>|50"
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Filter by Related Model
+
+```json
+{
+  "oper": {
+    "and": ["status|=|active"],
+    "category": {
+      "and": ["name|like|%electronics%"]
+    }
+  },
+  "relations": ["category:id,name"]
+}
+```
+
+## Testing Your API
+
+<Steps>
+
+<Step title="Seed Test Data">
+  Create a seeder to populate test products:
+  
+  ```bash
+  php artisan make:seeder ProductSeeder
+  ```
+  
+  ```php
+  Product::create([
+      'name' => 'Wireless Keyboard',
+      'price' => 89.99,
+      'stock' => 100,
+      'category_id' => 1,
+      'status' => 'active'
+  ]);
+  ```
+</Step>
+
+<Step title="Test with cURL">
+  ```bash
+  curl -X GET "http://localhost:8000/api/v1/products" \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json"
+  ```
+</Step>
+
+<Step title="Test with Postman">
+  Import the API endpoints into Postman and test all CRUD operations with various filter combinations.
+</Step>
+
+</Steps>
+
+<Note>
+  All endpoints automatically handle validation, error responses, and database exceptions. The BaseService provides built-in caching, filtering, and relation loading out of the box.
+</Note>
+
+<Warning>
+  Remember to add all relations to the `RELATIONS` constant in your model. Unlisted relations will be rejected with a 400 error for security reasons.
+</Warning>
+
+## Next Steps
+
+- Explore [Filtering Scenarios](/examples/filtering-scenarios) for advanced query examples
+- Learn about [Cache Scenarios](/examples/cache-scenarios) for performance optimization
+- Check [Edge Cases](/examples/edge-cases) for troubleshooting common issues
