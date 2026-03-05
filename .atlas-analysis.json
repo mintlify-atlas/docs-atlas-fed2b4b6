@@ -1,0 +1,164 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Rest Generic Class",
+  "projectDescription": "Laravel package that provides base classes for building RESTful APIs with dynamic filtering, relation loading, and hierarchical data structures.",
+  "theme": "mint",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "concepts",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/requirements",
+              "installation/setup",
+              "installation/configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core/models",
+              "core/services",
+              "core/controllers",
+              "core/filtering",
+              "core/relations",
+              "core/hierarchy"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/basic-usage",
+              "guides/advanced-filtering",
+              "guides/relation-loading",
+              "guides/hierarchical-data",
+              "guides/caching",
+              "guides/many-to-many",
+              "guides/bulk-operations",
+              "guides/permissions"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/environment-variables",
+              "configuration/cache-strategy",
+              "configuration/validation"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/base-model",
+              "api/base-service",
+              "api/rest-controller"
+            ]
+          },
+          {
+            "group": "Traits",
+            "pages": [
+              "api/traits/has-dynamic-filter",
+              "api/traits/manages-many-to-many",
+              "api/traits/manages-one-to-many",
+              "api/traits/has-permissions"
+            ]
+          },
+          {
+            "group": "Middleware",
+            "pages": [
+              "api/middleware/filter-request-by-role",
+              "api/middleware/inject-request-params",
+              "api/middleware/spatie-authorize",
+              "api/middleware/transform-data"
+            ]
+          },
+          {
+            "group": "Validation Rules",
+            "pages": [
+              "api/validation/overview",
+              "api/validation/ids-exist-rules",
+              "api/validation/unique-rules"
+            ]
+          },
+          {
+            "group": "Helpers",
+            "pages": [
+              "api/helpers/database-error-parser",
+              "api/helpers/request-body",
+              "api/helpers/objectify"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/simple-crud",
+              "examples/filtering-scenarios",
+              "examples/cache-scenarios",
+              "examples/edge-cases"
+            ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "help/troubleshooting",
+              "help/faq",
+              "help/security",
+              "help/migration-guide"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Base classes for RESTful CRUD operations",
+    "Dynamic query filtering with operators",
+    "Eager loading with field selection",
+    "Hierarchical data listing",
+    "Laravel Cache integration",
+    "Role-based field restrictions",
+    "Many-to-many relationship management",
+    "Custom validation rules",
+    "Export to Excel/PDF",
+    "Spatie permissions integration"
+  ],
+  "publicApiSurface": [
+    "Ronu\\RestGenericClass\\Core\\Models\\BaseModel",
+    "Ronu\\RestGenericClass\\Core\\Services\\BaseService",
+    "Ronu\\RestGenericClass\\Core\\Controllers\\RestController",
+    "Ronu\\RestGenericClass\\Core\\Traits\\HasDynamicFilter",
+    "Ronu\\RestGenericClass\\Core\\Traits\\ManagesManyToMany",
+    "Ronu\\RestGenericClass\\Core\\Traits\\ManagesOneToMany",
+    "Ronu\\RestGenericClass\\Core\\Middleware\\FilterRequestByRole",
+    "Ronu\\RestGenericClass\\Core\\Middleware\\InjectRequestParams",
+    "Ronu\\RestGenericClass\\Core\\Middleware\\SpatieAuthorize",
+    "Ronu\\RestGenericClass\\Core\\Rules\\IdsExistInTable",
+    "Ronu\\RestGenericClass\\Core\\Rules\\IdsExistNotDelete",
+    "Ronu\\RestGenericClass\\Core\\Rules\\UniqueInPivot",
+    "Ronu\\RestGenericClass\\Core\\Helpers\\DatabaseErrorParser"
+  ]
+}
